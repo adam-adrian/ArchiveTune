@@ -4336,13 +4336,28 @@ class MusicService :
     }
 
     private fun syncHistoryThresholdJob() {
+        Timber.tag("RemoteHistory").d("=== syncHistoryThresholdJob called")
         historyThresholdJob?.cancel()
         historyThresholdJob = null
 
-        val mediaId = currentHistoryMediaId ?: return
-        if (currentHistorySessionQueued) return
-        if (dataStore.get(PauseListenHistoryKey, false)) return
-        if (currentHistoryEventId != null && currentHistoryRemoteRegistered) return
+        val mediaId = currentHistoryMediaId
+        if (mediaId == null) {
+            Timber.tag("RemoteHistory").d("SKIP: mediaId null")
+            return
+        }
+        Timber.tag("RemoteHistory").d("syncThreshold: mediaId=$mediaId playedMs=${currentHistoryPlayedMs()} thresholdMs=${historyThresholdMs()} remoteRegistered=$currentHistoryRemoteRegistered")
+        if (currentHistorySessionQueued) {
+            Timber.tag("RemoteHistory").d("SKIP: sessionQueued")
+            return
+        }
+        if (dataStore.get(PauseListenHistoryKey, false)) {
+            Timber.tag("RemoteHistory").d("SKIP: historyPaused")
+            return
+        }
+        if (currentHistoryEventId != null && currentHistoryRemoteRegistered) {
+            Timber.tag("RemoteHistory").d("SKIP: already registered")
+            return
+        }
 
         val thresholdMs = historyThresholdMs()
         val playedMs = currentHistoryPlayedMs()
@@ -4352,7 +4367,10 @@ class MusicService :
             }
             return
         }
-        if (!player.isPlaying) return
+        if (!player.isPlaying) {
+            Timber.tag("RemoteHistory").d("SKIP: player not playing")
+            return
+        }
 
         historyThresholdJob = scope.launch {
             delay((thresholdMs - playedMs).coerceAtLeast(0L))
@@ -4361,19 +4379,36 @@ class MusicService :
     }
 
     private fun maybeRecordCurrentPlaybackHistory() {
-        val mediaId = currentHistoryMediaId ?: return
-        if (currentHistorySessionQueued) return
-        if (dataStore.get(PauseListenHistoryKey, false)) return
+        val mediaId = currentHistoryMediaId
+        Timber.tag("RemoteHistory").d("=== maybeRecordCurrentPlaybackHistory: mediaId=$mediaId")
+        if (mediaId == null) {
+            Timber.tag("RemoteHistory").d("SKIP: mediaId is null")
+            return
+        }
+        if (currentHistorySessionQueued) {
+            Timber.tag("RemoteHistory").d("SKIP: sessionQueued")
+            return
+        }
+        if (dataStore.get(PauseListenHistoryKey, false)) {
+            Timber.tag("RemoteHistory").d("SKIP: historyPaused")
+            return
+        }
 
         val thresholdMs = historyThresholdMs()
         val playedMs = currentHistoryPlayedMs()
+        Timber.tag("RemoteHistory").d("maybeRecord: playedMs=$playedMs thresholdMs=$thresholdMs")
         if (playedMs < thresholdMs) {
+            Timber.tag("RemoteHistory").d("SKIP: below threshold")
             syncHistoryThresholdJob()
             return
         }
 
         val sessionToken = currentHistorySessionToken
-        if (historyRecordingJobs.containsKey(sessionToken)) return
+        if (sessionToken != null && historyRecordingJobs.containsKey(sessionToken)) {
+            Timber.tag("RemoteHistory").d("SKIP: job already exists for sessionToken=$sessionToken")
+            return
+        }
+        Timber.tag("RemoteHistory").d("PROCEEDING with history recording")
         currentHistoryImmediateAttempted = true
 
         val eventIdSnapshot = currentHistoryEventId
@@ -4388,7 +4423,9 @@ class MusicService :
                         playTimeMs = playedMs,
                         mediaMetadata = mediaMetadataSnapshot,
                     )
+                Timber.tag("RemoteHistory").d("Calling registerRemotePlaybackHistory for mediaId=$mediaId")
                 val remoteRegistered = remoteRegisteredSnapshot || registerRemotePlaybackHistory(mediaId)
+                Timber.tag("RemoteHistory").d("registerRemotePlaybackHistory returned: $remoteRegistered")
                 ImmediateHistoryResult(
                     eventId = resolvedEventId,
                     remoteRegistered = remoteRegistered,
@@ -4397,6 +4434,7 @@ class MusicService :
         }
 
         historyRecordingJobs[sessionToken] = deferred
+        Timber.tag("RemoteHistory").d("Enqueued deferred for sessionToken: $sessionToken")
         scope.launch {
             val result = runCatching { deferred.await() }
                 .onFailure(::reportException)
@@ -4448,15 +4486,20 @@ class MusicService :
     }
 
     private suspend fun registerRemotePlaybackHistory(mediaId: String): Boolean {
+        Timber.tag("RemoteHistory").d("=== START for $mediaId ===")
         if (database.song(mediaId).first()?.song?.isLocal == true) {
             return false
         }
 
         suspend fun registerTracking(playbackTrackingUrl: String): Boolean {
+            Timber.tag("RemoteHistory").d("Sending tracking: ${playbackTrackingUrl.take(100)}")
             return YouTube.registerPlayback(
                 playlistId = null,
                 playbackTracking = playbackTrackingUrl,
-            ).onFailure { throwable ->
+            ).onSuccess {
+                Timber.tag("RemoteHistory").d("✅ SUCCESS for $mediaId")
+            }.onFailure { throwable ->
+                Timber.tag("RemoteHistory").e(throwable, "❌ FAILURE for $mediaId")
                 if (throwable is CancellationException) {
                     throw throwable
                 }
@@ -4468,6 +4511,7 @@ class MusicService :
             }.isSuccess
         }
 
+        Timber.tag("RemoteHistory").d("Cache URL: ${remotePlaybackTrackingUrlCache[mediaId]?.take(100)}")
         remotePlaybackTrackingUrlCache[mediaId]?.let { cachedPlaybackTrackingUrl ->
             if (registerTracking(cachedPlaybackTrackingUrl)) {
                 return true
@@ -4475,6 +4519,7 @@ class MusicService :
             remotePlaybackTrackingUrlCache.remove(mediaId, cachedPlaybackTrackingUrl)
         }
 
+        Timber.tag("RemoteHistory").d("Cache miss, fetching fresh...")
         val remotePlaybackTracking =
             retryWithoutPlaybackLoginContext {
                 YTPlayerUtils.playerResponseForMetadata(mediaId)
@@ -4505,12 +4550,14 @@ class MusicService :
                 }
             }.getOrNull()?.playbackTracking
 
+        Timber.tag("RemoteHistory").d("Fresh URL: ${remotePlaybackTracking?.remotePlaybackTrackingUrl()?.take(100)}")
         val refreshedPlaybackTrackingUrl = remotePlaybackTracking?.remotePlaybackTrackingUrl()
         if (refreshedPlaybackTrackingUrl != null) {
             remotePlaybackTrackingUrlCache[mediaId] = refreshedPlaybackTrackingUrl
             return registerTracking(refreshedPlaybackTrackingUrl)
         }
 
+        Timber.tag("RemoteHistory").d("❌ NO URL available for $mediaId")
         return false
     }
 
@@ -5821,6 +5868,7 @@ private fun onMediaItemTransitionInternal() {
         val mediaItem = eventTime.timeline.getWindow(eventTime.windowIndex, Timeline.Window()).mediaItem
         val mediaId = mediaItem.mediaId
         val thresholdMs = historyThresholdMs()
+        Timber.tag("RemoteHistory").d("onPlaybackStatsReady: totalPlayTimeMs=${playbackStats.totalPlayTimeMs}, thresholdMs=$thresholdMs, mediaId=$mediaId")
         val pendingSession = popPendingHistoryFinalization(mediaId)
         val alreadyPersistedForSession = pendingSession?.eventId != null || pendingSession?.remoteRegistered == true
         val reachedHistoryThreshold = playbackStats.totalPlayTimeMs >= thresholdMs &&

@@ -63,6 +63,7 @@ import java.net.Proxy
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
 import moe.rukamori.archivetune.utils.toPlaybackAuthState
+import moe.rukamori.archivetune.utils.potoken.WebViewPoTokenGenerator
 
 @HiltAndroidApp
 class App : Application(), SingletonImageLoader.Factory {
@@ -101,6 +102,7 @@ class App : Application(), SingletonImageLoader.Factory {
     }
 
     private fun initializeCriticalSync() {
+        WebViewPoTokenGenerator.initialize(this)
         CanvasArtworkPlaybackCache.init(this)
         ArchiveTuneCanvas.initialize(BuildConfig.CANVAS_BEARER_TOKEN)
         PaxsenixLyrics.setUserAgent("ArchiveTune", BuildConfig.VERSION_NAME)

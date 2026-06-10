@@ -57,7 +57,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import moe.rukamori.archivetune.R
-import moe.rukamori.archivetune.innertube.utils.PoTokenGenerator
+import moe.rukamori.archivetune.utils.potoken.WebViewPoTokenGenerator
+import timber.log.Timber
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import moe.rukamori.archivetune.ui.component.IconButton
 import moe.rukamori.archivetune.utils.resetAuthWebViewSession
 
@@ -75,7 +80,6 @@ class PoTokenExtractionActivity : ComponentActivity() {
 
     private var activeWebView: WebView? = null
     private var extractedVisitorData: String? = null
-    private var extractedGvsToken: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -172,12 +176,9 @@ class PoTokenExtractionActivity : ComponentActivity() {
             finish()
         }
 
-        fun completeIfReady() {
+        suspend fun completeIfReady(playerToken: String, gvsToken: String) {
             val visitorData = extractedVisitorData ?: return
-            val gvsToken = extractedGvsToken ?: return
             isExtracting = false
-
-            val playerToken = PoTokenGenerator.generateColdStartToken(visitorData, "player")
 
             setResult(
                 Activity.RESULT_OK,
@@ -200,7 +201,6 @@ class PoTokenExtractionActivity : ComponentActivity() {
             isExtracting = true
 
             extractedVisitorData = null
-            extractedGvsToken = null
 
             webView?.evaluateJavascript(
                 "(function(){try{return window.yt?.config_?.VISITOR_DATA || window.ytcfg?.get?.('VISITOR_DATA') || '';}catch(e){return '';}})();"
@@ -208,33 +208,31 @@ class PoTokenExtractionActivity : ComponentActivity() {
                 val visitor = parseJsResult(result)
                 if (visitor.isNotBlank()) {
                     extractedVisitorData = visitor
-                    completeIfReady()
-                }
-            }
-
-            webView?.evaluateJavascript(
-                "(function(){try{var c=window.ytcfg;if(c&&c.get){var t=c.get('PO_TOKEN');if(t)return t;}var s=document.querySelectorAll('script');for(var i=0;i<s.length;i++){var m=s[i].textContent.match(/\"PO_TOKEN\":\"([^\"]+)\"/);if(m)return m[1];}return '';}catch(e){return '';}})();"
-            ) { result ->
-                val gvs = parseJsResult(result)
-                if (gvs.isNotBlank()) {
-                    extractedGvsToken = gvs
-                    completeIfReady()
-                }
-            }
-
-            webView?.postDelayed({
-                if (isFinishing) return@postDelayed
-                val visitor = extractedVisitorData
-                if (!visitor.isNullOrBlank() && extractedGvsToken.isNullOrBlank()) {
-                    extractedGvsToken = PoTokenGenerator.generateSessionToken(visitor)
-                    completeIfReady()
-                    return@postDelayed
-                }
-                if (extractedVisitorData.isNullOrBlank() || extractedGvsToken.isNullOrBlank()) {
+                    // Use lifecycleScope to call the suspend completeIfReady
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        try {
+                            val poTokenResult = WebViewPoTokenGenerator.getWebClientPoToken("player", visitor)
+                            if (poTokenResult != null) {
+                                completeIfReady(poTokenResult.playerRequestPoToken, poTokenResult.streamingDataPoToken)
+                            } else {
+                                isExtracting = false
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, R.string.token_generation_failed, Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            isExtracting = false
+                            Timber.tag("PoTokenExtraction").e(e, "Failed to generate tokens")
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, R.string.token_generation_failed, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                } else {
                     isExtracting = false
                     Toast.makeText(context, R.string.token_generation_failed, Toast.LENGTH_SHORT).show()
                 }
-            }, 4000L)
+            }
         }
 
         BackHandler {
@@ -264,15 +262,6 @@ class PoTokenExtractionActivity : ComponentActivity() {
                             fun onRetrieveVisitorData(newVisitorData: String?) {
                                 if (!newVisitorData.isNullOrBlank()) {
                                     extractedVisitorData = newVisitorData
-                                    runOnUiThread { completeIfReady() }
-                                }
-                            }
-
-                            @JavascriptInterface
-                            fun onRetrievePoToken(newPoToken: String?) {
-                                if (!newPoToken.isNullOrBlank()) {
-                                    extractedGvsToken = newPoToken
-                                    runOnUiThread { completeIfReady() }
                                 }
                             }
                         }, "Android")
