@@ -18,6 +18,7 @@ import moe.rukamori.archivetune.innertube.PlaybackAuthState
 import moe.rukamori.archivetune.innertube.YouTube
 import moe.rukamori.archivetune.innertube.models.YouTubeClient
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.IOS
+import moe.rukamori.archivetune.innertube.utils.PoTokenGenerator
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.TVHTML5_SIMPLY_EMBEDDED_PLAYER
 import moe.rukamori.archivetune.innertube.models.YouTubeClient.Companion.WEB_REMIX
 import moe.rukamori.archivetune.innertube.models.response.PlayerResponse
@@ -594,12 +595,25 @@ object YTPlayerUtils {
         val metadataClient = MAIN_CLIENT
 
         Timber.tag(logTag).i("Fetching metadata response using client: ${metadataClient.clientName}")
+        
+        // Generate poToken for history sync in metadata request
+        var metadataPoToken: String? = null
+        if (metadataClient.useWebPoTokens && sessionId != null) {
+            try {
+                val poTokenResult = PoTokenGenerator.getWebClientPoToken(videoId, sessionId)
+                metadataPoToken = poTokenResult.playerRequestPoToken
+            } catch (e: Exception) {
+                Timber.tag(logTag).w(e, "Failed to generate poToken for metadata request")
+            }
+        }
+        
         var metadataResult =
             YouTube.player(
                 videoId = videoId,
                 playlistId = playlistId,
                 client = metadataClient,
                 signatureTimestamp = signatureTimestamp,
+                poToken = metadataPoToken,
                 setLogin = canUseLoggedInPlayback,
                 authState = authState,
             )
@@ -619,12 +633,23 @@ object YTPlayerUtils {
             canUseLoggedInPlayback = false
             YouTube.authState = authState
             clearPlaybackAuthCaches()
+            // Re-generate poToken for the retry with visitor playback
+            metadataPoToken = null
+            if (metadataClient.useWebPoTokens && authState.visitorData != null) {
+                try {
+                    val poTokenResult = PoTokenGenerator.getWebClientPoToken(videoId, authState.visitorData!!)
+                    metadataPoToken = poTokenResult.playerRequestPoToken
+                } catch (e: Exception) {
+                    Timber.tag(logTag).w(e, "Failed to generate poToken for metadata retry")
+                }
+            }
             metadataResult =
                 YouTube.player(
                     videoId = videoId,
                     playlistId = playlistId,
                     client = metadataClient,
                     signatureTimestamp = signatureTimestamp,
+                    poToken = metadataPoToken,
                     setLogin = false,
                     authState = authState,
                 )
@@ -679,11 +704,22 @@ object YTPlayerUtils {
                     metadataPlayerResponse
                 } else {
                     Timber.tag(logTag).i("Fetching player response for fallback client: ${describeClient(client)}")
+                    // Generate poToken for this client if it supports web tokens
+                    var streamPoToken: String? = null
+                    if (client.useWebPoTokens && sessionId != null) {
+                        try {
+                            val poTokenResult = PoTokenGenerator.getWebClientPoToken(videoId, sessionId)
+                            streamPoToken = poTokenResult.playerRequestPoToken
+                        } catch (e: Exception) {
+                            Timber.tag(logTag).w(e, "Failed to generate poToken for fallback client: ${describeClient(client)}")
+                        }
+                    }
                     YouTube.player(
                         videoId = videoId,
                         playlistId = playlistId,
                         client = client,
                         signatureTimestamp = signatureTimestamp,
+                        poToken = streamPoToken,
                         setLogin = canUseLoggedInPlayback,
                         authState = authState,
                     ).getPlaybackPlayerResponseOrNull(videoId, authState)
@@ -719,12 +755,23 @@ object YTPlayerUtils {
                             describeClient(client),
                             videoId,
                         )
+                        // Generate poToken for the retry with repaired auth
+                        var repairPoToken: String? = null
+                        if (client.useWebPoTokens && sessionId != null) {
+                            try {
+                                val poTokenResult = PoTokenGenerator.getWebClientPoToken(videoId, sessionId)
+                                repairPoToken = poTokenResult.playerRequestPoToken
+                            } catch (e: Exception) {
+                                Timber.tag(logTag).w(e, "Failed to generate poToken for bot detection retry")
+                            }
+                        }
                         streamPlayerResponse =
                             YouTube.player(
                                 videoId = videoId,
                                 playlistId = playlistId,
                                 client = client,
                                 signatureTimestamp = signatureTimestamp,
+                                poToken = repairPoToken,
                                 setLogin = canUseLoggedInPlayback,
                                 authState = authState,
                             ).getPlaybackPlayerResponseOrNull(videoId, authState)
@@ -928,11 +975,29 @@ object YTPlayerUtils {
         authState: PlaybackAuthState = YouTube.currentPlaybackAuthState(),
     ): Result<PlayerResponse> {
         Timber.tag(logTag).i("Fetching metadata-only player response for videoId: $videoId using MAIN_CLIENT: ${MAIN_CLIENT.clientName}")
+        
+        // Generate signatureTimestamp and poToken for history sync
+        val signatureTimestamp = getSignatureTimestampOrNull(videoId)
+        val isLoggedIn = authState.hasPlaybackLoginContext
+        val sessionId = authState.sessionId
+        var poToken: String? = null
+        
+        if (MAIN_CLIENT.useWebPoTokens && sessionId != null) {
+            try {
+                val poTokenResult = PoTokenGenerator.getWebClientPoToken(videoId, sessionId)
+                poToken = poTokenResult.playerRequestPoToken
+            } catch (e: Exception) {
+                Timber.tag(logTag).w(e, "Failed to generate poToken for metadata request")
+            }
+        }
+        
         return YouTube.player(
             videoId = videoId,
             playlistId = playlistId,
             client = MAIN_CLIENT,
-            setLogin = authState.hasPlaybackLoginContext,
+            signatureTimestamp = signatureTimestamp,
+            poToken = poToken,
+            setLogin = isLoggedIn,
             authState = authState,
         )
             .onSuccess { Timber.tag(logTag).d("Successfully fetched metadata") }

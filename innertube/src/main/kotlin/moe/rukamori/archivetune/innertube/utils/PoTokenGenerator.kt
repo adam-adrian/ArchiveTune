@@ -63,6 +63,13 @@ object PoTokenGenerator {
         videoId: String,
     ): String = generateColdStartToken(identifier, videoId)
 
+    fun getWebClientPoToken(videoId: String, sessionId: String): PoTokenResult {
+        return PoTokenResult(
+            playerRequestPoToken = generateContentToken(sessionId, videoId),
+            gvsPoToken = generateSessionToken(sessionId),
+        )
+    }
+
 
     private fun xorEncrypt(data: ByteArray, key: ByteArray): ByteArray {
         return ByteArray(data.size) { i ->
