@@ -997,7 +997,7 @@ object YTPlayerUtils {
             client = MAIN_CLIENT,
             signatureTimestamp = signatureTimestamp,
             poToken = poToken,
-            setLogin = isLoggedIn,
+            setLogin = true,
             authState = authState,
         )
             .onSuccess { Timber.tag(logTag).d("Successfully fetched metadata") }
@@ -1217,7 +1217,7 @@ object YTPlayerUtils {
                 Timber.tag(logTag).e(it, "Failed to get signature timestamp")
                 reportException(it)
             }
-            .getOrNull()
+            .getOrNull() ?: 19413
     }
     /**
      * Wrapper around the [NewPipeUtils.getStreamUrl] function which reports exceptions.
