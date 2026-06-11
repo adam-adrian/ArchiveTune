@@ -4487,7 +4487,9 @@ class MusicService :
 
     private suspend fun registerRemotePlaybackHistory(mediaId: String): Boolean {
         Timber.tag("RemoteHistory").d("=== START for $mediaId ===")
+        remotePlaybackTrackingUrlCache.clear()
         if (database.song(mediaId).first()?.song?.isLocal == true) {
+            remotePlaybackTrackingUrlCache.remove(mediaId)
             return false
         }
 
