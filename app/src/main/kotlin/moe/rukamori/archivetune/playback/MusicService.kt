@@ -4492,7 +4492,7 @@ class MusicService :
         }
 
         suspend fun registerTracking(playbackTrackingUrl: String): Boolean {
-            Timber.tag("RemoteHistory").d("Sending tracking: ${playbackTrackingUrl.take(100)}")
+            Timber.tag("RemoteHistory").d("Sending tracking: ${playbackTrackingUrl.take(300)}")
             return YouTube.registerPlayback(
                 playlistId = null,
                 playbackTracking = playbackTrackingUrl,
@@ -4511,7 +4511,7 @@ class MusicService :
             }.isSuccess
         }
 
-        Timber.tag("RemoteHistory").d("Cache URL: ${remotePlaybackTrackingUrlCache[mediaId]?.take(100)}")
+        Timber.tag("RemoteHistory").d("Cache URL: ${remotePlaybackTrackingUrlCache[mediaId]?.take(300)}")
         remotePlaybackTrackingUrlCache[mediaId]?.let { cachedPlaybackTrackingUrl ->
             if (registerTracking(cachedPlaybackTrackingUrl)) {
                 return true
@@ -4550,7 +4550,7 @@ class MusicService :
                 }
             }.getOrNull()?.playbackTracking
 
-        Timber.tag("RemoteHistory").d("Fresh URL: ${remotePlaybackTracking?.remotePlaybackTrackingUrl()?.take(100)}")
+        Timber.tag("RemoteHistory").d("Fresh URL: ${remotePlaybackTracking?.remotePlaybackTrackingUrl()?.take(300)}")
         val refreshedPlaybackTrackingUrl = remotePlaybackTracking?.remotePlaybackTrackingUrl()
         if (refreshedPlaybackTrackingUrl != null) {
             remotePlaybackTrackingUrlCache[mediaId] = refreshedPlaybackTrackingUrl
