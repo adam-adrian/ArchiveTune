@@ -407,8 +407,8 @@ fun HistoryScreen(
     // A. When screen opens + user is logged in → fetch remote history in background
     LaunchedEffect(isLoggedIn) {
         if (!isLoggedIn) return@LaunchedEffect
-        if (remoteHistoryState.value is RemoteHistoryUiState.Success) return@LaunchedEffect
-        delay(1000)  // wait for screen
+        if (remoteHistoryState is RemoteHistoryUiState.Success) return@LaunchedEffect
+        delay(1_000)  // wait for screen
 
         viewModel.fetchRemoteHistorySilent()
     }
@@ -422,7 +422,7 @@ fun HistoryScreen(
             repeat(3) { attempt ->
                 delay(3000L * (attempt + 1))  // 3s, 6s, 9s
                 viewModel.fetchRemoteHistorySilent()
-                if (remoteHistoryState.value is RemoteHistoryUiState.Success) return@LaunchedEffect
+                if (remoteHistoryState is RemoteHistoryUiState.Success) return@collect
             }
         }
     }
