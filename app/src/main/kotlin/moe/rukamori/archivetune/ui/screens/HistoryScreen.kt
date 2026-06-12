@@ -416,7 +416,7 @@ fun HistoryScreen(
     // B. When playback sync happens → retry with backoff
     LaunchedEffect(isLoggedIn) {
         YouTube.historySyncEvent.collect {
-            if (!isLoggedIn) return@LaunchedEffect
+            if (!isLoggedIn) return@collect
 
             // Retry 3 times with increasing delay (handles slow internet)
             repeat(3) { attempt ->
