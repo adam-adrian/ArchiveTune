@@ -17,6 +17,7 @@ import moe.rukamori.archivetune.utils.reportException
 import moe.rukamori.archivetune.db.MusicDatabase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -28,6 +29,7 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import javax.inject.Inject
+import timber.log.Timber
 
 @HiltViewModel
 class HistoryViewModel
@@ -76,7 +78,9 @@ constructor(
             }.stateIn(viewModelScope, SharingStarted.Lazily, emptyMap())
 
     init {
-        fetchRemoteHistory()
+        viewModelScope.launch(Dispatchers.IO) {
+            fetchRemoteHistorySilent()
+        }
     }
 
     fun fetchRemoteHistory() {
@@ -94,6 +98,61 @@ constructor(
                 _remoteHistoryState.value = RemoteHistoryUiState.Error
                 reportException(it)
             }
+        }
+    }
+
+    /**
+     * Fetches remote history without transitioning the UI to a Loading state.
+     *
+     * - [RemoteHistoryUiState.Error]   → delegates to [fetchRemoteHistory] (user sees spinner)
+     * - [RemoteHistoryUiState.Loading] → fetches silently; transitions to Error on failure
+     * - [RemoteHistoryUiState.Empty]   → fetches silently; transitions to Error on failure
+     * - [RemoteHistoryUiState.Success] → fetches silently; keeps cached data + logs warning on failure
+     *
+     * Call from a coroutine context (e.g. LaunchedEffect or viewModelScope.launch).
+     */
+    suspend fun fetchRemoteHistorySilent() {
+        val snapshot = _remoteHistoryState.value
+
+        if (snapshot is RemoteHistoryUiState.Error) {
+            fetchRemoteHistory()
+            return
+        }
+
+        withContext(Dispatchers.IO) {
+            try {
+                val page = YouTube.musicHistory().getOrThrow()
+                historyPage.value = page
+                _remoteHistoryState.value =
+                    if (page.sections?.any { section -> section.songs.isNotEmpty() } == true) {
+                        RemoteHistoryUiState.Success(page)
+                    } else {
+                        RemoteHistoryUiState.Empty
+                    }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.tag("History").w(e, "Silent remote history fetch failed")
+                when (snapshot) {
+                    is RemoteHistoryUiState.Success -> {
+                        // Keep cached data; don't disrupt the user
+                    }
+                    is RemoteHistoryUiState.Loading,
+                    is RemoteHistoryUiState.Empty -> {
+                        _remoteHistoryState.value = RemoteHistoryUiState.Error
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Non-suspend wrapper for call sites that are not already in a coroutine
+     * (e.g. click handlers in Compose).
+     */
+    fun enqueueSilentFetch() {
+        viewModelScope.launch(Dispatchers.IO) {
+            fetchRemoteHistorySilent()
         }
     }
 
