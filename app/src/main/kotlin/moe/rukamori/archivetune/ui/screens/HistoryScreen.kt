@@ -274,7 +274,7 @@ fun HistoryScreen(
                             viewModel.fetchRemoteHistory()  // error: fetch with loading (user expects feedback)
                         }
                         is RemoteHistoryUiState.Empty -> {
-                            viewModel.fetchRemoteHistorySilent()  // empty: try silent fetch
+                            viewModel.enqueueSilentFetch()  // empty: try silent fetch
                         }
                         else -> {
                             // Already has data: no fetch needed
@@ -406,22 +406,23 @@ fun HistoryScreen(
 
     // A. When screen opens + user is logged in → fetch remote history in background
     LaunchedEffect(isLoggedIn) {
-        if (isLoggedIn) {
-            delay(1000)  // wait for screen to render first
-            viewModel.fetchRemoteHistorySilent()
-        }
+        if (!isLoggedIn) return@LaunchedEffect
+        if (remoteHistoryState.value is RemoteHistoryUiState.Success) return@LaunchedEffect
+        delay(1000)  // wait for screen
+
+        viewModel.fetchRemoteHistorySilent()
     }
 
     // B. When playback sync happens → retry with backoff
-    LaunchedEffect(Unit) {
+    LaunchedEffect(isLoggedIn) {
         YouTube.historySyncEvent.collect {
-            if (!isLoggedIn) return@collect
+            if (!isLoggedIn) return@LaunchedEffect
 
             // Retry 3 times with increasing delay (handles slow internet)
             repeat(3) { attempt ->
                 delay(3000L * (attempt + 1))  // 3s, 6s, 9s
-                val success = viewModel.fetchRemoteHistorySilent()
-                if (success) return@collect  // success, stop retrying
+                viewModel.fetchRemoteHistorySilent()
+                if (remoteHistoryState.value is RemoteHistoryUiState.Success) return@LaunchedEffect
             }
         }
     }
