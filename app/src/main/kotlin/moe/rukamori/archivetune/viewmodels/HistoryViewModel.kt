@@ -45,8 +45,6 @@ constructor(
     private val thisMonday = today.with(DayOfWeek.MONDAY)
     private val lastMonday = thisMonday.minusDays(7)
 
-    val historyPage = mutableStateOf<HistoryPage?>(null)
-
     val events =
         database
             .events()
@@ -87,13 +85,7 @@ constructor(
         _remoteHistoryState.value = RemoteHistoryUiState.Loading
         viewModelScope.launch(Dispatchers.IO) {
             YouTube.musicHistory().onSuccess {
-                historyPage.value = it
-                _remoteHistoryState.value =
-                    if (it.sections?.any { section -> section.songs.isNotEmpty() } == true) {
-                        RemoteHistoryUiState.Success(it)
-                    } else {
-                        RemoteHistoryUiState.Empty
-                    }
+                _remoteHistoryState.value = it.toRemoteUiState()
             }.onFailure {
                 _remoteHistoryState.value = RemoteHistoryUiState.Error
                 reportException(it)
@@ -122,13 +114,7 @@ constructor(
         withContext(Dispatchers.IO) {
             try {
                 val page = YouTube.musicHistory().getOrThrow()
-                historyPage.value = page
-                _remoteHistoryState.value =
-                    if (page.sections?.any { section -> section.songs.isNotEmpty() } == true) {
-                        RemoteHistoryUiState.Success(page)
-                    } else {
-                        RemoteHistoryUiState.Empty
-                    }
+                _remoteHistoryState.value = page.toRemoteUiState()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -145,6 +131,10 @@ constructor(
             }
         }
     }
+
+    private fun HistoryPage.toRemoteUiState(): RemoteHistoryUiState =
+        if (sections?.any { it.songs.isNotEmpty() } == true) RemoteHistoryUiState.Success(this)
+        else RemoteHistoryUiState.Empty
 
     /**
      * Non-suspend wrapper for call sites that are not already in a coroutine
