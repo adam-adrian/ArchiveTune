@@ -2344,6 +2344,25 @@ class MusicService :
         return false
     }
 
+    private fun isEofOrTruncatedStreamError(error: PlaybackException): Boolean {
+        if (
+            error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
+            error.errorCode == PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE
+        ) {
+            var throwable: Throwable? = error.cause
+            while (throwable != null) {
+                if (throwable is java.io.EOFException) return true
+                if (throwable is java.io.IOException &&
+                    throwable.message?.contains("unexpected end of stream", ignoreCase = true) == true
+                ) {
+                    return true
+                }
+                throwable = throwable.cause
+            }
+        }
+        return false
+    }
+
     private fun retryPlaybackAfterStreamFailure(
         mediaId: String,
         isFullyCachedMedia: Boolean,
@@ -5235,6 +5254,24 @@ private fun onMediaItemTransitionInternal() {
                     currentMediaId,
                     error.errorCode,
                 )
+                player.prepare()
+                return
+            }
+        }
+
+        if (!isLocalMedia && isEofOrTruncatedStreamError(error)) {
+            Timber.tag("MusicService").w(
+                "EOFException / truncated stream for %s; clearing caches and retrying from current position",
+                currentMediaId,
+            )
+            playbackUrlCache.remove(currentMediaId)
+            YTPlayerUtils.invalidateCachedStreamUrls(currentMediaId)
+            scope.launch(Dispatchers.IO) {
+                runCatching { playerCache.removeResource(currentMediaId) }
+                runCatching { downloadCache.removeResource(currentMediaId) }
+            }
+            if (playbackStreamRecoveryTracker.registerRetryAttempt(currentMediaId)) {
+                player.seekTo(player.currentMediaItemIndex, player.currentPosition.coerceAtLeast(0L))
                 player.prepare()
                 return
             }
