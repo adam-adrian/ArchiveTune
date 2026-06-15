@@ -76,7 +76,7 @@ object GlassEffectDefaults {
 @Composable
 fun rememberGlassEffectHazeState(): HazeState = rememberHazeState()
 
-fun Modifier.glassEffectSource(
+private fun Modifier.applyGlassEffectSource(
     hazeState: HazeState?,
     enabled: Boolean = true,
 ): Modifier = if (!enabled || hazeState == null) {
@@ -89,12 +89,12 @@ fun Modifier.glassEffectSource(
 fun Modifier.glassEffectSource(
     enabled: Boolean = LocalGlassEffectEnabled.current,
     hazeState: HazeState? = LocalGlassEffectHazeState.current,
-): Modifier = glassEffectSource(
+): Modifier = applyGlassEffectSource(
     hazeState = hazeState,
     enabled = enabled,
 )
 
-fun Modifier.glassEffect(
+private fun Modifier.applyGlassEffect(
     hazeState: HazeState?,
     enabled: Boolean,
     style: GlassEffectStyle,
@@ -127,7 +127,7 @@ fun Modifier.glassEffect(
     enabled: Boolean = LocalGlassEffectEnabled.current,
     hazeState: HazeState? = LocalGlassEffectHazeState.current,
     style: GlassEffectStyle = GlassEffectDefaults.style(),
-): Modifier = glassEffect(
+): Modifier = applyGlassEffect(
     hazeState = hazeState,
     enabled = enabled,
     style = style,
