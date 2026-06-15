@@ -244,6 +244,8 @@ dependencies {
     implementation(libs.lifecycle.runtime.compose)
 
     implementation(libs.material3)
+    implementation(libs.haze.core)
+    implementation(libs.haze.blur)
     implementation(libs.palette)
     implementation(libs.androidsvg)
     implementation(libs.aboutlibraries.core)

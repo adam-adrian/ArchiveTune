@@ -78,6 +78,7 @@ fun ArchiveTuneTheme(
     disableAnimations: Boolean = false,
     fontPreference: AppFontPreference = AppFontPreference.DEFAULT,
     customFontUri: String = "",
+    glassEffect: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
@@ -159,6 +160,7 @@ fun ArchiveTuneTheme(
     CompositionLocalProvider(
         LocalArchiveTuneFontPreference provides fontPreference,
         LocalArchiveTuneFontFamily provides resolvedFontFamily,
+        LocalGlassEffectEnabled provides glassEffect,
     ) {
         MaterialExpressiveTheme(
             colorScheme = animatedColorScheme,

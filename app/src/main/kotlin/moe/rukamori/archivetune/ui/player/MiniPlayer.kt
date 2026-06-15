@@ -44,7 +44,9 @@ import moe.rukamori.archivetune.LocalPlayerConnection
 import moe.rukamori.archivetune.constants.MiniPlayerBackgroundStyle
 import moe.rukamori.archivetune.constants.MiniPlayerBackgroundStyleKey
 import moe.rukamori.archivetune.constants.SwipeSensitivityKey
+import moe.rukamori.archivetune.ui.theme.LocalGlassEffectEnabled
 import moe.rukamori.archivetune.ui.theme.PlayerColorExtractor
+import moe.rukamori.archivetune.ui.theme.glassEffect
 import moe.rukamori.archivetune.utils.rememberEnumPreference
 import moe.rukamori.archivetune.utils.rememberPreference
 import kotlinx.coroutines.Dispatchers
@@ -85,6 +87,7 @@ private fun NewMiniPlayer(
         key = MiniPlayerBackgroundStyleKey,
         defaultValue = MiniPlayerBackgroundStyle.THEME,
     )
+    val glassEffectEnabled = LocalGlassEffectEnabled.current
     val mediaMetadata by playerConnection.mediaMetadata.collectAsStateWithLifecycle()
     var gradientColors by remember {
         mutableStateOf<List<Color>>(emptyList())
@@ -97,7 +100,7 @@ private fun NewMiniPlayer(
         }
     }
     val fallbackColor = MaterialTheme.colorScheme.surface.toArgb()
-    val shouldUseArtworkBackground = miniPlayerBackgroundStyle != MiniPlayerBackgroundStyle.THEME
+    val shouldUseArtworkBackground = !glassEffectEnabled && miniPlayerBackgroundStyle != MiniPlayerBackgroundStyle.THEME
 
     LaunchedEffect(
         mediaMetadata?.id,
@@ -182,12 +185,15 @@ private fun NewMiniPlayer(
                 .height(64.dp)
                 .offset { IntOffset(offsetX.roundToInt(), 0) }
                 .clip(RoundedCornerShape(32.dp))
+                .glassEffect(enabled = glassEffectEnabled)
         ) {
-            MiniPlayerBackground(
-                style = effectiveBackgroundStyle,
-                palette = backgroundPalette,
-                modifier = Modifier.fillMaxSize(),
-            )
+            if (!glassEffectEnabled) {
+                MiniPlayerBackground(
+                    style = effectiveBackgroundStyle,
+                    palette = backgroundPalette,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
             NewMiniPlayerContent(
                 position = position,
                 duration = duration,

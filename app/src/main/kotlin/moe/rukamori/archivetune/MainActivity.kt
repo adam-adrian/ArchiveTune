@@ -189,6 +189,7 @@ import moe.rukamori.archivetune.constants.FloatingToolbarBottomPadding
 import moe.rukamori.archivetune.constants.FloatingToolbarHeight
 import moe.rukamori.archivetune.constants.FloatingToolbarHorizontalPadding
 import moe.rukamori.archivetune.constants.FontPreferenceKey
+import moe.rukamori.archivetune.constants.GlassEffectEnabledKey
 import moe.rukamori.archivetune.constants.HasPressedStarKey
 import moe.rukamori.archivetune.constants.LaunchCountKey
 import moe.rukamori.archivetune.constants.MiniPlayerBottomSpacing
@@ -276,6 +277,9 @@ import moe.rukamori.archivetune.ui.theme.ArchiveTuneTheme
 import moe.rukamori.archivetune.ui.theme.ColorSaver
 import moe.rukamori.archivetune.ui.theme.DefaultThemeColor
 import moe.rukamori.archivetune.ui.theme.extractThemeColor
+import moe.rukamori.archivetune.ui.theme.LocalGlassEffectHazeState
+import moe.rukamori.archivetune.ui.theme.glassEffectSource
+import moe.rukamori.archivetune.ui.theme.rememberGlassEffectHazeState
 import moe.rukamori.archivetune.ui.utils.appBarScrollBehavior
 import moe.rukamori.archivetune.ui.utils.backToMain
 import moe.rukamori.archivetune.ui.utils.resetHeightOffset
@@ -664,6 +668,8 @@ class MainActivity : ComponentActivity() {
                 }
             val pureBlackEnabled by rememberPreference(PureBlackKey, defaultValue = false)
             val pureBlack = pureBlackEnabled && useDarkTheme
+            val glassEffectEnabled by rememberPreference(GlassEffectEnabledKey, defaultValue = false)
+            val glassEffectHazeState = rememberGlassEffectHazeState()
 
             val customThemeSeedPalette = remember(customThemeColorValue) {
                 if (customThemeColorValue.startsWith("#")) {
@@ -754,6 +760,7 @@ class MainActivity : ComponentActivity() {
                 disableAnimations = disableAnimations,
                 fontPreference = fontPreference,
                 customFontUri = customFontUri,
+                glassEffect = glassEffectEnabled,
             ) {
                     BoxWithConstraints(
                         modifier =
@@ -1359,6 +1366,7 @@ class MainActivity : ComponentActivity() {
                         LocalDownloadUtil provides downloadUtil,
                         LocalShimmerTheme provides ShimmerTheme,
                         LocalSyncUtils provides syncUtils,
+                        LocalGlassEffectHazeState provides glassEffectHazeState,
                         moe.rukamori.archivetune.ui.component.LocalBottomSheetPageState provides bottomSheetPageState,
                         moe.rukamori.archivetune.ui.component.LocalMenuState provides menuState,
                     ) {
@@ -1962,6 +1970,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     },
                                     modifier = Modifier
+                                        .glassEffectSource()
                                         .then(
                                             if (isTvDevice) Modifier
                                                 .focusRequester(contentAreaFocusRequester)

@@ -81,6 +81,7 @@ import moe.rukamori.archivetune.constants.FontPreferenceKey
 import moe.rukamori.archivetune.constants.GridItemSize
 import moe.rukamori.archivetune.constants.GridItemsSizeKey
 import moe.rukamori.archivetune.constants.LibraryFilter
+import moe.rukamori.archivetune.constants.GlassEffectEnabledKey
 import moe.rukamori.archivetune.constants.PlayerDesignStyle
 import moe.rukamori.archivetune.constants.PlayerDesignStyleKey
 import moe.rukamori.archivetune.constants.PlayerBackgroundStyle
@@ -179,6 +180,7 @@ fun AppearanceSettings(
             defaultValue = MiniPlayerBackgroundStyle.THEME,
         )
     val (pureBlack, onPureBlackChange) = rememberPreference(PureBlackKey, defaultValue = false)
+    val (glassEffect, onGlassEffectChange) = rememberPreference(GlassEffectEnabledKey, defaultValue = false)
     val (disableBlur, onDisableBlurChange) = rememberPreference(DisableBlurKey, defaultValue = false)
     val (disableAnimations, onDisableAnimationsChange) = rememberPreference(
         DisableAnimationsKey,
@@ -302,6 +304,7 @@ fun AppearanceSettings(
     }
     val isPlayerBackgroundStyleEnabled =
         playerDesignStyle != PlayerDesignStyle.V7 && playerDesignStyle != PlayerDesignStyle.V8 && playerDesignStyle != PlayerDesignStyle.V9
+    val isMiniPlayerBackgroundStyleEnabled = !glassEffect
     val isSystemInDarkTheme = isSystemInDarkTheme()
     val useDarkTheme =
         remember(darkMode, isSystemInDarkTheme) {
@@ -320,6 +323,12 @@ fun AppearanceSettings(
     LaunchedEffect(isPlayerBackgroundStyleEnabled, playerBackground) {
         if (!isPlayerBackgroundStyleEnabled && playerBackground != PlayerBackgroundStyle.DEFAULT) {
             onPlayerBackgroundChange(PlayerBackgroundStyle.DEFAULT)
+        }
+    }
+
+    LaunchedEffect(isMiniPlayerBackgroundStyleEnabled, miniPlayerBackground) {
+        if (!isMiniPlayerBackgroundStyleEnabled && miniPlayerBackground != MiniPlayerBackgroundStyle.THEME) {
+            onMiniPlayerBackgroundChange(MiniPlayerBackgroundStyle.THEME)
         }
     }
 
@@ -430,6 +439,16 @@ fun AppearanceSettings(
                     icon = { Icon(painterResource(R.drawable.contrast), null) },
                     checked = pureBlack,
                     onCheckedChange = onPureBlackChange,
+                )
+            }
+
+            item {
+                SwitchPreference(
+                    title = { Text(stringResource(R.string.glass_effect)) },
+                    description = stringResource(R.string.glass_effect_desc),
+                    icon = { Icon(painterResource(R.drawable.blur_on), null) },
+                    checked = glassEffect,
+                    onCheckedChange = onGlassEffectChange,
                 )
             }
 
@@ -599,9 +618,15 @@ fun AppearanceSettings(
             item {
                 EnumListPreference(
                     title = { Text(stringResource(R.string.mini_player_background_style)) },
+                    description = if (isMiniPlayerBackgroundStyleEnabled) {
+                        null
+                    } else {
+                        stringResource(R.string.mini_player_background_style_glass_effect_desc)
+                    },
                     icon = { Icon(painterResource(R.drawable.gradient), null) },
                     selectedValue = miniPlayerBackground,
                     onValueSelected = onMiniPlayerBackgroundChange,
+                    isEnabled = isMiniPlayerBackgroundStyleEnabled,
                     valueText = {
                         when (it) {
                             MiniPlayerBackgroundStyle.THEME -> stringResource(R.string.follow_theme)

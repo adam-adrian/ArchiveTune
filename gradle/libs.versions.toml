@@ -44,6 +44,7 @@ accompanist = "1.0.19"
 accompanist-core = "0.4.5"
 androidsvg = "1.4"
 aboutLibraries = "15.0.0-rc01"
+haze = "2.0.0-alpha03"
 
 [libraries]
 annotation = { module = "androidx.annotation:annotation", version.ref = "annotation" }
@@ -74,6 +75,9 @@ viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose",
 lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 
 material3 = { module = "androidx.compose.material3:material3", version.ref = "material3" }
+
+haze-core = { module = "dev.chrisbanes.haze:haze", version.ref = "haze" }
+haze-blur = { module = "dev.chrisbanes.haze:haze-blur", version.ref = "haze" }
 
 coil = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-gif = { module = "io.coil-kt.coil3:coil-gif", version.ref = "coil" }

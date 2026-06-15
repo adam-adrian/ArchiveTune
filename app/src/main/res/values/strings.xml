@@ -475,11 +475,14 @@
     <string name="archivetune_canvas_desc">Animate album artwork while playing (Powered by BetterLyrics)</string>
     <string name="archivetune_canvas_v7_desc">Unavailable with the Immersive player style</string>
     <string name="player_background_style_v8_v9_desc">Unavailable with V8 and V9 player styles</string>
+    <string name="mini_player_background_style_glass_effect_desc">Unavailable when Glass effect is enabled</string>
     <string name="show_button1_description">Toggle visibility of button 1 in Discord Rich Presence</string>
     <string name="show_button2_description">Toggle visibility of button 2 in Discord Rich Presence</string>
     <string name="discord_activity_type">Activity type</string>
     <string name="dark_theme_follow_system">Follow system</string>
     <string name="pure_black">Pure black</string>
+    <string name="glass_effect">Glass effect</string>
+    <string name="glass_effect_desc">Apply frosted glass effect to Mini Player and bottom navigation</string>
     <string name="disable_blur">Disable blur effects</string>
     <string name="disable_blur_desc">Disable blur effects throughout the app</string>
     <string name="disable_animations">Disable animations</string>
