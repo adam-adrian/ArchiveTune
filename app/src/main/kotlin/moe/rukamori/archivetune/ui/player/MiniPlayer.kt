@@ -185,7 +185,10 @@ private fun NewMiniPlayer(
                 .height(64.dp)
                 .offset { IntOffset(offsetX.roundToInt(), 0) }
                 .clip(RoundedCornerShape(32.dp))
-                .glassEffect(enabled = glassEffectEnabled)
+                .glassEffect(
+                    enabled = glassEffectEnabled,
+                    shape = RoundedCornerShape(32.dp),
+                )
         ) {
             if (!glassEffectEnabled) {
                 MiniPlayerBackground(

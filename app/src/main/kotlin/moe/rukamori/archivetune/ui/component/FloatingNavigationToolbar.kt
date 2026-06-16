@@ -129,7 +129,9 @@ fun FloatingNavigationToolbar(
                         musicRecognitionContentDescription = musicRecognitionContentDescription,
                     )
                 },
-                modifier = Modifier.widthIn(max = 480.dp).glassEffect(),
+                modifier = Modifier
+                    .widthIn(max = 480.dp)
+                    .glassEffect(shape = CircleShape),
                 colors = toolbarColors,
                 scrollBehavior = scrollBehavior,
                 animationSpec = FloatingToolbarDefaults.animationSpec(),
@@ -153,7 +155,9 @@ fun FloatingNavigationToolbar(
                         contentDescription = fabContentDescription,
                     )
                 },
-                modifier = Modifier.widthIn(max = 480.dp).glassEffect(),
+                modifier = Modifier
+                    .widthIn(max = 480.dp)
+                    .glassEffect(shape = CircleShape),
                 colors = toolbarColors,
                 scrollBehavior = scrollBehavior,
                 animationSpec = FloatingToolbarDefaults.animationSpec(),
@@ -169,7 +173,9 @@ fun FloatingNavigationToolbar(
         } else {
             HorizontalFloatingToolbar(
                 expanded = true,
-                modifier = Modifier.widthIn(max = 420.dp).glassEffect(),
+                modifier = Modifier
+                    .widthIn(max = 420.dp)
+                    .glassEffect(shape = CircleShape),
                 colors = toolbarColors,
                 scrollBehavior = scrollBehavior,
             ) {

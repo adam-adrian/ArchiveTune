@@ -1,5 +1,7 @@
 package moe.rukamori.archivetune.ui.theme
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -7,11 +9,11 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.foundation.shape.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
 import dev.chrisbanes.haze.HazeInputScale
 import dev.chrisbanes.haze.HazeState
@@ -98,28 +100,19 @@ private fun Modifier.applyGlassEffect(
     hazeState: HazeState?,
     enabled: Boolean,
     style: GlassEffectStyle,
+    shape: Shape,
 ): Modifier = if (!enabled || hazeState == null) {
     this
 } else {
-    hazeEffect(state = hazeState) {
-        inputScale = HazeInputScale.Auto
-        blurEffect {
-            this.style = style.blurStyle
+    clip(shape)
+        .hazeEffect(state = hazeState) {
+            inputScale = HazeInputScale.Auto
+            blurEffect {
+                this.style = style.blurStyle
+            }
         }
-    }.drawWithContent {
-        drawContent()
-        drawRect(
-            brush = style.highlightBrush,
-            size = Size(
-                width = size.width,
-                height = size.height * 0.4f,
-            ),
-        )
-        drawRect(
-            color = style.borderColor,
-            style = Stroke(width = 1.dp.toPx()),
-        )
-    }
+        .background(style.highlightBrush, shape)
+        .border(1.dp, style.borderColor, shape)
 }
 
 @Composable
@@ -127,8 +120,10 @@ fun Modifier.glassEffect(
     enabled: Boolean = LocalGlassEffectEnabled.current,
     hazeState: HazeState? = LocalGlassEffectHazeState.current,
     style: GlassEffectStyle = GlassEffectDefaults.style(),
+    shape: Shape = RectangleShape,
 ): Modifier = applyGlassEffect(
     hazeState = hazeState,
     enabled = enabled,
     style = style,
+    shape = shape,
 )

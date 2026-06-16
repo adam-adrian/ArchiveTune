@@ -1896,6 +1896,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .glassEffectSource()
                                     .nestedScroll(searchBarScrollBehavior.nestedScrollConnection)
                             ) {
                                 var transitionDirection =
@@ -1970,7 +1971,6 @@ class MainActivity : ComponentActivity() {
                                         }
                                     },
                                     modifier = Modifier
-                                        .glassEffectSource()
                                         .then(
                                             if (isTvDevice) Modifier
                                                 .focusRequester(contentAreaFocusRequester)
