@@ -31,7 +31,6 @@ import moe.rukamori.archivetune.extensions.div
 import moe.rukamori.archivetune.extensions.tryOrNull
 import moe.rukamori.archivetune.extensions.zipInputStream
 import moe.rukamori.archivetune.extensions.zipOutputStream
-import moe.rukamori.archivetune.playback.MusicService
 import moe.rukamori.archivetune.playback.MusicService.Companion.PERSISTENT_QUEUE_FILE
 import moe.rukamori.archivetune.utils.dataStore
 import moe.rukamori.archivetune.utils.reportException
@@ -322,13 +321,11 @@ class BackupRestoreViewModel @Inject constructor(
                 }
 
                 completedUnits++
+
+                // Clear any leftover staging files from a previously interrupted restore
+                // to avoid mixing old staged side-cars with this restore.
                 if (includeLibrary) {
-                    emit(context.getString(R.string.restore_step_stopping_playback), indeterminate = true)
-                    runCatching { context.stopService(Intent(context, MusicService::class.java)) }
-                    runCatching { database.awaitIdle() }
-                    runCatching { database.checkpoint() }
-                    runCatching { database.close() }
-                    completedUnits++
+                    clearRestoreStaging(context)
                 }
 
                 context.applicationContext.contentResolver.openInputStream(uri)?.use { stream ->
@@ -358,11 +355,17 @@ class BackupRestoreViewModel @Inject constructor(
                                 "${InternalDatabase.DB_NAME}-shm",
                                 "${InternalDatabase.DB_NAME}-journal" -> {
                                     emit(context.getString(R.string.restore_step_restoring_file, name), indeterminate = true)
-                                    val dbFile = context.getDatabasePath(name)
-                                    if (dbFile.exists()) {
-                                        dbFile.delete()
+                                    // Write to a staging file rather than the live db. The live
+                                    // database is still open and being read by the music service
+                                    // and UI collectors here; overwriting it now races with those
+                                    // readers (IllegalStateException: already-closed / disk image
+                                    // malformed). The staged files are swapped in on next launch,
+                                    // before Room opens, via InternalDatabase.applyPendingRestore().
+                                    val stagingFile = InternalDatabase.pendingRestoreStagingFile(context, name)
+                                    if (stagingFile.exists()) {
+                                        stagingFile.delete()
                                     }
-                                    FileOutputStream(dbFile).use { out ->
+                                    FileOutputStream(stagingFile).use { out ->
                                         zip.copyTo(out)
                                     }
                                 }
@@ -370,6 +373,19 @@ class BackupRestoreViewModel @Inject constructor(
                             completedUnits++
                             entry = zip.nextEntry
                         }
+                    }
+                }
+
+                // Mark the staged db files for swap-in on the next launch. Validate the staged
+                // main db first so a truncated/corrupt backup fails here (recoverable) instead of
+                // after the restart, when the live db has already been replaced.
+                if (includeLibrary) {
+                    val stagedDb = InternalDatabase.pendingRestoreStagingFile(context, InternalDatabase.DB_NAME)
+                    if (!isValidSqliteFile(stagedDb)) {
+                        throw IllegalStateException("Restored database is not a valid SQLite file")
+                    }
+                    runCatching {
+                        FileOutputStream(InternalDatabase.pendingRestoreMarker(context)).use { it.write(0) }
                     }
                 }
 
@@ -391,6 +407,9 @@ class BackupRestoreViewModel @Inject constructor(
                 exitProcess(0)
             } catch (e: Exception) {
                 reportException(e)
+                // Restore failed before exit: discard any staged db files so a partial/aborted
+                // restore is never applied on the next launch.
+                runCatching { clearRestoreStaging(context) }
                 withContext(Dispatchers.Main) {
                     Toast.makeText(context, e.message ?: context.getString(R.string.restore_failed), Toast.LENGTH_LONG).show()
                 }
@@ -398,6 +417,27 @@ class BackupRestoreViewModel @Inject constructor(
                 _backupRestoreProgress.value = null
             }
         }
+    }
+
+    private fun isValidSqliteFile(file: java.io.File): Boolean {
+        if (!file.exists() || file.length() < SQLITE_MAGIC_HEADER.size) return false
+        return runCatching {
+            file.inputStream().use { input ->
+                val header = ByteArray(SQLITE_MAGIC_HEADER.size)
+                input.read(header) == header.size && header.contentEquals(SQLITE_MAGIC_HEADER)
+            }
+        }.getOrDefault(false)
+    }
+
+    private fun clearRestoreStaging(context: Context) {
+        listOf("", "-wal", "-shm", "-journal").forEach { sideCar ->
+            runCatching {
+                InternalDatabase
+                    .pendingRestoreStagingFile(context, "${InternalDatabase.DB_NAME}$sideCar")
+                    .delete()
+            }
+        }
+        runCatching { InternalDatabase.pendingRestoreMarker(context).delete() }
     }
 
     private suspend fun writeSettingsToXml(
@@ -681,6 +721,9 @@ class BackupRestoreViewModel @Inject constructor(
     companion object {
         const val SETTINGS_FILENAME = "settings.preferences_pb"
         const val SETTINGS_XML_FILENAME = "settings.xml"
+
+        // "SQLite format 3\u0000" — the fixed 16-byte header every SQLite db file starts with.
+        private val SQLITE_MAGIC_HEADER = "SQLite format 3\u0000".toByteArray(Charsets.US_ASCII)
 
         val ACCOUNT_PREF_KEYS: Set<String> = setOf(
             "innerTubeCookie",

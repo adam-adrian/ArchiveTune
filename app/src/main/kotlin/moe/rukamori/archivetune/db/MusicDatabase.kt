@@ -165,7 +165,53 @@ abstract class InternalDatabase : RoomDatabase() {
     companion object {
         const val DB_NAME = "song.db"
 
+        const val RESTORE_STAGING_SUFFIX = ".restore"
+        const val RESTORE_MARKER_NAME = "song.db.restore.pending"
+
+        private val DB_SIDE_CARS = listOf("", "-wal", "-shm", "-journal")
+
+        fun pendingRestoreStagingFile(context: Context, name: String): java.io.File =
+            context.getDatabasePath("$name$RESTORE_STAGING_SUFFIX")
+
+        fun pendingRestoreMarker(context: Context): java.io.File =
+            context.getDatabasePath(RESTORE_MARKER_NAME)
+
+        fun applyPendingRestore(context: Context) {
+            val marker = pendingRestoreMarker(context)
+            if (!marker.exists()) return
+            try {
+                DB_SIDE_CARS.forEach { sideCar ->
+                    val target = context.getDatabasePath("$DB_NAME$sideCar")
+                    val staged = context.getDatabasePath("$DB_NAME$sideCar$RESTORE_STAGING_SUFFIX")
+                    if (staged.exists()) {
+                        // Try an atomic replace first (rename(2) on Android replaces the target
+                        // in place); only fall back to delete-then-rename if that fails, so we
+                        // don't leave a window where the target is gone but the staged copy
+                        // hasn't been moved in yet.
+                        val replaced = runCatching { staged.renameTo(target) }.getOrDefault(false)
+                        if (!replaced) {
+                            runCatching { if (target.exists()) target.delete() }
+                            runCatching { staged.renameTo(target) }
+                        }
+                    } else {
+                        // The backup didn't include this side-car; remove any stale copy so it
+                        // can't be paired with the freshly restored main db file.
+                        if (sideCar.isNotEmpty()) runCatching { if (target.exists()) target.delete() }
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Failed to apply pending restore", t)
+            } finally {
+                DB_SIDE_CARS.forEach { sideCar ->
+                    runCatching { context.getDatabasePath("$DB_NAME$sideCar$RESTORE_STAGING_SUFFIX").delete() }
+                }
+                runCatching { marker.delete() }
+            }
+        }
+
         fun newInstance(context: Context): MusicDatabase {
+            applyPendingRestore(context)
+
             val universalMigrations =
                 (2 until CURRENT_VERSION)
                     .map { from -> UniversalMigration(context, from, CURRENT_VERSION) }
