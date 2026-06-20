@@ -10,6 +10,12 @@
 package moe.rukamori.archivetune.ui.player
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
@@ -24,11 +30,11 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
@@ -62,12 +68,15 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1262,6 +1271,25 @@ fun QueueCollapsedContentV7(
                     ),
         ) {
             val iconSize = 22.dp
+            val sleepTimerText = makeTimeString(sleepTimerTimeLeft.coerceAtLeast(0L))
+            val textMeasurer = rememberTextMeasurer()
+            val sleepTimerTextWidth =
+                with(LocalDensity.current) {
+                    textMeasurer
+                        .measure(
+                            text = AnnotatedString(sleepTimerText),
+                            style = MaterialTheme.typography.labelMedium,
+                        ).size.width.toDp()
+                }
+            val sleepTimerButtonWidth by animateDpAsState(
+                targetValue =
+                    if (sleepTimerEnabled) {
+                        10.dp + iconSize + 6.dp + sleepTimerTextWidth + 12.dp
+                    } else {
+                        42.dp
+                    },
+                label = "v7SleepTimerWidth",
+            )
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -1312,39 +1340,34 @@ fun QueueCollapsedContentV7(
                     modifier =
                         Modifier
                             .height(42.dp)
-                            .widthIn(min = 42.dp),
+                            .width(sleepTimerButtonWidth),
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier.size(42.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.bedtime),
-                                contentDescription = stringResource(id = R.string.sleep_timer),
-                                modifier = Modifier.size(iconSize),
-                                tint = textBackgroundColor,
-                            )
-                        }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 10.dp),
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.bedtime),
+                            contentDescription = stringResource(id = R.string.sleep_timer),
+                            modifier = Modifier.size(iconSize),
+                            tint = textBackgroundColor,
+                        )
 
-                        AnimatedContent(
-                            label = "v7SleepTimerText",
-                            targetState = sleepTimerEnabled,
-                        ) { enabled ->
-                            if (enabled) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(end = 12.dp),
-                                ) {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = makeTimeString(sleepTimerTimeLeft.coerceAtLeast(0L)),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = textBackgroundColor,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
+                        AnimatedVisibility(
+                            visible = sleepTimerEnabled,
+                            enter = expandHorizontally(expandFrom = Alignment.Start) + fadeIn(),
+                            exit = shrinkHorizontally(shrinkTowards = Alignment.Start) + fadeOut(),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = sleepTimerText,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = textBackgroundColor,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
                             }
                         }
                     }
