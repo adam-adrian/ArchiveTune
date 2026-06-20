@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1309,20 +1310,14 @@ fun QueueCollapsedContentV7(
                     shape = if (sleepTimerEnabled) RoundedCornerShape(20.dp) else CircleShape,
                     color = textBackgroundColor.copy(alpha = if (sleepTimerEnabled) 0.16f else 0.08f),
                     modifier =
-                        if (sleepTimerEnabled) {
-                            Modifier.height(42.dp)
-                        } else {
-                            Modifier.size(42.dp)
-                        },
+                        Modifier
+                            .height(42.dp)
+                            .widthIn(min = 42.dp),
                 ) {
-                    AnimatedContent(
-                        label = "v7SleepTimer",
-                        targetState = sleepTimerEnabled,
-                    ) { enabled ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center,
-                            modifier = Modifier.padding(horizontal = if (enabled) 12.dp else 10.dp),
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier.size(42.dp),
+                            contentAlignment = Alignment.Center,
                         ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.bedtime),
@@ -1330,15 +1325,26 @@ fun QueueCollapsedContentV7(
                                 modifier = Modifier.size(iconSize),
                                 tint = textBackgroundColor,
                             )
+                        }
+
+                        AnimatedContent(
+                            label = "v7SleepTimerText",
+                            targetState = sleepTimerEnabled,
+                        ) { enabled ->
                             if (enabled) {
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = makeTimeString(sleepTimerTimeLeft.coerceAtLeast(0L)),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = textBackgroundColor,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(end = 12.dp),
+                                ) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = makeTimeString(sleepTimerTimeLeft.coerceAtLeast(0L)),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = textBackgroundColor,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                             }
                         }
                     }
