@@ -393,6 +393,9 @@ class MusicService :
     private var pausedPresenceGate = PausedPresenceGate.FollowPreference
 
     @Volatile
+    private var discordServiceStopping = false
+
+    @Volatile
     private var lastDiscordPresenceDecision: DiscordPresenceDecision? = null
     private val discordSyncEpoch = AtomicLong(0L)
     private val discordSyncRequests = Channel<DiscordSyncRequest>(Channel.CONFLATED)
@@ -1308,6 +1311,7 @@ class MusicService :
                     isPlaying = isPlaying,
                     showWhenPaused = showWhenPaused,
                     pausedPresenceGate = pausedPresenceGate,
+                    serviceStopping = discordServiceStopping,
                 ),
             )
 
@@ -5203,10 +5207,10 @@ class MusicService :
                 if (player.playbackState != STATE_IDLE) {
                     player.addMediaItems(mediaItems.drop(1))
                 } else {
-                    try {
-                        DiscordPresenceManager.stop()
-                    } catch (_: Exception) {
-                    }
+                    requestDiscordSync(
+                        reason = "player_idle_after_queue_extension",
+                        force = true,
+                    )
                 }
             }
         }
@@ -6872,6 +6876,11 @@ class MusicService :
     }
 
     override fun onDestroy() {
+        discordServiceStopping = true
+        requestDiscordSync(
+            reason = "service_destroy",
+            force = true,
+        )
         super.onDestroy()
         effectiveVolumeRampJob?.cancel()
         effectiveVolumeRampJob = null
@@ -6885,10 +6894,6 @@ class MusicService :
         unregisterMuteRecoveryObserver()
         try {
             scope.launch { stopTogetherInternal() }
-        } catch (_: Exception) {
-        }
-        try {
-            DiscordPresenceManager.stop()
         } catch (_: Exception) {
         }
         try {
@@ -6953,12 +6958,6 @@ class MusicService :
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        // When the user clears the app from Recents, ensure we clear Discord rich presence
-        try {
-            DiscordPresenceManager.stop()
-        } catch (_: Exception) {
-        }
-        lastPresenceToken = null
 
         val stopMusicOnTaskClearEnabled = dataStore.get(StopMusicOnTaskClearKey, false)
 
@@ -6976,12 +6975,22 @@ class MusicService :
 
             if (shouldStopServiceOnTaskRemoved(stopMusicOnTaskClearEnabled, isHostSessionActive, isPlaybackInactive)) {
                 if (stopMusicOnTaskClearEnabled) {
+                    discordServiceStopping = true
+                    requestDiscordSync(
+                        reason = "task_removed_stop_music_on_task_clear",
+                        force = true,
+                    )
                     runCatching { stopAndClearPlayback(clearPersistentState = true) }
                     stopForegroundAndSelf()
                     return
                 }
 
                 if (isHostSessionActive && isPlaybackInactive) {
+                    discordServiceStopping = true
+                    requestDiscordSync(
+                        reason = "task_removed_host_inactive",
+                        force = true,
+                    )
                     runCatching { scope.launch { stopTogetherInternal() } }
                     runCatching { togetherSessionState.value = moe.rukamori.archivetune.together.TogetherSessionState.Idle }
                     stopSelf()
