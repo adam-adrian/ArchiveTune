@@ -140,16 +140,6 @@ class PlayerConnection(
         player.seekToNext()
         player.prepare()
         player.playWhenReady = true
-        // Immediately restart the Discord presence updater so it picks up the new track without waiting
-        if (moe.rukamori.archivetune.ui.screens.settings.DiscordPresenceManager
-                .isRunning()
-        ) {
-            try {
-                moe.rukamori.archivetune.ui.screens.settings.DiscordPresenceManager
-                    .restart()
-            } catch (_: Exception) {
-            }
-        }
     }
 
     fun seekToPrevious() {
@@ -161,16 +151,6 @@ class PlayerConnection(
         player.seekToPrevious()
         player.prepare()
         player.playWhenReady = true
-        // Immediately restart the Discord presence updater so it picks up the new track without waiting
-        if (moe.rukamori.archivetune.ui.screens.settings.DiscordPresenceManager
-                .isRunning()
-        ) {
-            try {
-                moe.rukamori.archivetune.ui.screens.settings.DiscordPresenceManager
-                    .restart()
-            } catch (_: Exception) {
-            }
-        }
     }
 
     override fun onPlaybackStateChanged(state: Int) {
