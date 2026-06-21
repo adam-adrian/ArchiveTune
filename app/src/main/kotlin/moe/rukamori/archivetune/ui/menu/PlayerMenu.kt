@@ -13,6 +13,9 @@ import android.content.Intent
 import android.media.audiofx.AudioEffect
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.animateColorAsState
@@ -160,6 +163,7 @@ import kotlin.math.roundToInt
 @Composable
 fun PlayerMenu(
     mediaMetadata: MediaMetadata?,
+    sheetState: androidx.compose.material3.SheetState? = null,
     navController: NavController,
     playerBottomSheetState: BottomSheetState,
     isQueueTrigger: Boolean? = false,
@@ -201,6 +205,10 @@ fun PlayerMenu(
         remember(speedDialPins, songPin) {
             speedDialPins.any { it.type == songPin.type && it.id == songPin.id }
         }
+
+    val configuration = LocalConfiguration.current
+    val minSheetHeight = (configuration.screenHeightDp * 0.60f).dp
+
     val isLocalMedia =
         remember(librarySong?.song?.isLocal, mediaMetadata.id) {
             librarySong?.song?.isLocal == true || mediaMetadata.id.isLocalMediaId()
@@ -371,7 +379,7 @@ fun PlayerMenu(
     Surface(
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().heightIn(min = minSheetHeight),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
