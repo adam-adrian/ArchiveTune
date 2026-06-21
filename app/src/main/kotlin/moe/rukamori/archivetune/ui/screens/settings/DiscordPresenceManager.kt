@@ -113,6 +113,24 @@ object DiscordPresenceManager {
             generation = updateGeneration.incrementAndGet(),
         )
 
+    suspend fun clearNow(
+        context: Context,
+        token: String? = null,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val appContext = context.applicationContext
+            rpcMutex.withLock {
+                try {
+                    clearPresenceLocked(appContext, token)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Timber.tag(LOG_TAG).e(error, "clearNow failed")
+                    false
+                }
+            }
+        }
+
     private suspend fun updatePresence(
         context: Context,
         token: String,
@@ -137,12 +155,11 @@ object DiscordPresenceManager {
                     }
 
                     if (song == null) {
-                        val rpc = getOrCreateRpc(appContext, activeToken)
-                        rpc.stopActivity()
-                        setLastRpcTimestamps(null, null)
-                        consecutiveFailures = 0
-                        Timber.tag(LOG_TAG).d("cleared presence because no song is active")
-                        return@withLock true
+                        val cleared = clearPresenceLocked(appContext, activeToken)
+                        if (cleared) {
+                            Timber.tag(LOG_TAG).d("cleared presence because no song is active")
+                        }
+                        return@withLock cleared
                     }
 
                     val showWhenPaused = appContext.dataStore[DiscordShowWhenPausedKey] ?: false
@@ -158,15 +175,14 @@ object DiscordPresenceManager {
                         )
 
                     if (visibilityDecision is DiscordPresenceDecision.Hidden) {
-                        val rpc = getOrCreateRpc(appContext, activeToken)
-                        rpc.stopActivity()
-                        setLastRpcTimestamps(null, null)
-                        consecutiveFailures = 0
-                        Timber.tag(LOG_TAG).d(
-                            "cleared presence because visibility policy hid it reason=%s",
-                            visibilityDecision.reason,
-                        )
-                        return@withLock true
+                        val cleared = clearPresenceLocked(appContext, activeToken)
+                        if (cleared) {
+                            Timber.tag(LOG_TAG).d(
+                                "cleared presence because visibility policy hid it reason=%s",
+                                visibilityDecision.reason,
+                            )
+                        }
+                        return@withLock cleared
                     }
 
                     runCatching {
@@ -211,6 +227,31 @@ object DiscordPresenceManager {
                 }
             }
         }
+
+    private suspend fun clearPresenceLocked(
+        context: Context,
+        token: String? = null,
+    ): Boolean {
+        val existingRpc = rpcInstance
+        if (existingRpc != null) {
+            existingRpc.stopActivity()
+            setLastRpcTimestamps(null, null)
+            consecutiveFailures = 0
+            return true
+        }
+
+        val activeToken = DiscordOAuthRepository.getValidAccessToken(context) ?: token.orEmpty()
+        if (activeToken.isBlank()) {
+            Timber.tag(LOG_TAG).w("clearPresenceLocked skipped because token is missing")
+            return false
+        }
+
+        val rpc = getOrCreateRpc(context, activeToken)
+        rpc.stopActivity()
+        setLastRpcTimestamps(null, null)
+        consecutiveFailures = 0
+        return true
+    }
 
     fun start(
         context: Context,

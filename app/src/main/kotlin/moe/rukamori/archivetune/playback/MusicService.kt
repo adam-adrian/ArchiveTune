@@ -1277,7 +1277,8 @@ class MusicService :
 
         val song = currentSong.value
         val enabled = dataStore.get(EnableDiscordRPCKey, true)
-        val hasToken = dataStore.get(DiscordTokenKey, "").isNotBlank()
+        val token = dataStore.get(DiscordTokenKey, "")
+        val hasToken = token.isNotBlank()
         val showWhenPaused = dataStore.get(DiscordShowWhenPausedKey, false)
         val isPlaying = withContext(Dispatchers.Main.immediate) { player.isPlaying }
 
@@ -1295,23 +1296,86 @@ class MusicService :
 
         ensureDiscordSyncFresh(request.epoch)
 
-        if (request.force || decision != lastDiscordPresenceDecision) {
-            Timber.tag(DISCORD_SYNC_TAG).d(
-                "sync epoch=%d reason=%s force=%s decision=%s",
-                request.epoch,
-                request.reason,
-                request.force,
-                decision,
-            )
-        } else {
+        if (!request.force && decision == lastDiscordPresenceDecision) {
             Timber.tag(DISCORD_SYNC_TAG).v(
                 "sync epoch=%d reason=%s unchanged decision=%s",
                 request.epoch,
                 request.reason,
                 decision,
             )
+            return
         }
+
+        Timber.tag(DISCORD_SYNC_TAG).d(
+            "sync epoch=%d reason=%s force=%s decision=%s",
+            request.epoch,
+            request.reason,
+            request.force,
+            decision,
+        )
+
+        applyDiscordPresenceDecision(
+            request = request,
+            decision = decision,
+            token = token,
+            song = song,
+            isPlaying = isPlaying,
+        )
+
         lastDiscordPresenceDecision = decision
+    }
+
+    private suspend fun applyDiscordPresenceDecision(
+        request: DiscordSyncRequest,
+        decision: DiscordPresenceDecision,
+        token: String,
+        song: Song?,
+        isPlaying: Boolean,
+    ) {
+        ensureDiscordSyncFresh(request.epoch)
+
+        when (decision) {
+            is DiscordPresenceDecision.Hidden -> {
+                when (decision.reason) {
+                    HiddenReason.NoSong,
+                    HiddenReason.PausedByPreference,
+                    HiddenReason.PausedByNotificationDismiss,
+                    -> {
+                        ensureDiscordSyncFresh(request.epoch)
+                        val cleared =
+                            DiscordPresenceManager.clearNow(
+                                context = this@MusicService,
+                                token = token.takeIf { it.isNotBlank() } ?: lastPresenceToken,
+                            )
+                        if (!cleared) {
+                            Timber.tag(DISCORD_SYNC_TAG).d(
+                                "clear skipped or failed for hidden reason=%s",
+                                decision.reason,
+                            )
+                        }
+                    }
+
+                    HiddenReason.Disabled,
+                    HiddenReason.NoToken,
+                    HiddenReason.ServiceStopping,
+                    -> {
+                        ensureDiscordSyncFresh(request.epoch)
+                        DiscordPresenceManager.stop()
+                        lastPresenceToken = null
+                    }
+                }
+            }
+
+            is DiscordPresenceDecision.Visible -> {
+                Timber.tag(DISCORD_SYNC_TAG).v(
+                    "visible decision deferred until playback call sites migrate songId=%s paused=%s playing=%s hasSong=%s",
+                    decision.songId,
+                    decision.isPaused,
+                    isPlaying,
+                    song != null,
+                )
+            }
+        }
     }
 
     private fun cancelRestoredQueueHydration() {
