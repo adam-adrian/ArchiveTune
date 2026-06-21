@@ -5527,56 +5527,41 @@ class MusicService :
 
         if (events.containsAny(EVENT_TIMELINE_CHANGED, EVENT_POSITION_DISCONTINUITY)) {
             currentMediaMetadata.value = player.currentMetadata
-            // immediate update when media item transitions to avoid stale presence
+            requestDiscordSync(
+                reason = "timeline_or_position_discontinuity",
+                force = true,
+            )
             scope.launch {
                 try {
-                    val token = dataStore.get(DiscordTokenKey, "")
-                    if (token.isNotBlank() && DiscordPresenceManager.isRunning()) {
-                        val mediaId = player.currentMediaItem?.mediaId
-                        val song = if (mediaId != null) withContext(Dispatchers.IO) { database.song(mediaId).first() } else null
-                        val finalSong =
-                            (song ?: player.currentMetadata?.let { createTransientSongFromMedia(it) })
-                                .withResolvedPresenceDuration(player.duration)
-
-                        val success =
-                            DiscordPresenceManager.updateNow(
-                                context = this@MusicService,
-                                token = token,
-                                song = finalSong,
-                                positionMs = player.currentPosition,
-                                isPaused = !player.isPlaying,
-                            )
-                        if (!success) {
-                            Timber.tag("MusicService").w("transition immediate presence update failed — attempting restart")
-                            try {
-                                DiscordPresenceManager.restart()
-                            } catch (_: Exception) {
-                            }
-                        }
-                        try {
-                            val lbEnabled = dataStore.get(ListenBrainzEnabledKey, false)
-                            val lbToken = dataStore.get(ListenBrainzTokenKey, "")
-                            if (lbEnabled && !lbToken.isNullOrBlank()) {
-                                scope.launch(Dispatchers.IO) {
-                                    try {
-                                        ListenBrainzManager.submitPlayingNow(
-                                            this@MusicService,
-                                            lbToken,
-                                            finalSong,
-                                            player.currentPosition,
-                                        )
-                                    } catch (ie: Exception) {
-                                        Timber.tag("MusicService").v(ie, "ListenBrainz playing_now submit failed on transition")
-                                    }
+                    val mediaId = player.currentMediaItem?.mediaId
+                    val song = if (mediaId != null) withContext(Dispatchers.IO) { database.song(mediaId).first() } else null
+                    val finalSong =
+                        (song ?: player.currentMetadata?.let { createTransientSongFromMedia(it) })
+                            .withResolvedPresenceDuration(player.duration)
+                        ?: return@launch
+                    try {
+                        val lbEnabled = dataStore.get(ListenBrainzEnabledKey, false)
+                        val lbToken = dataStore.get(ListenBrainzTokenKey, "")
+                        if (lbEnabled && !lbToken.isNullOrBlank()) {
+                            scope.launch(Dispatchers.IO) {
+                                try {
+                                    ListenBrainzManager.submitPlayingNow(
+                                        this@MusicService,
+                                        lbToken,
+                                        finalSong,
+                                        player.currentPosition,
+                                    )
+                                } catch (ie: Exception) {
+                                    Timber.tag("MusicService").v(ie, "ListenBrainz playing_now submit failed on transition")
                                 }
                             }
-
-                            // Last.fm now playing - handled by ScrobbleManager
-                        } catch (_: Exception) {
                         }
+
+                        // Last.fm now playing - handled by ScrobbleManager
+                    } catch (_: Exception) {
                     }
                 } catch (e: Exception) {
-                    Timber.tag("MusicService").v(e, "immediate presence update failed on transition")
+                    Timber.tag("MusicService").v(e, "timeline/position follow-up work failed")
                 }
             }
         }
@@ -5589,6 +5574,10 @@ class MusicService :
             if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
                 currentMediaMetadata.value = player.currentMetadata
             }
+            requestDiscordSync(
+                reason = "is_playing_or_media_item_transition",
+                force = true,
+            )
             // Capture player state on Main thread
             val currentMediaId = player.currentMediaItem?.mediaId
             val currentMetadata = player.currentMetadata
@@ -5597,64 +5586,39 @@ class MusicService :
 
             scope.launch {
                 try {
-                    val token = withContext(Dispatchers.IO) { dataStore.get(DiscordTokenKey, "") }
-                    if (token.isNotBlank() && DiscordPresenceManager.isRunning()) {
-                        val song =
-                            if (currentMediaId !=
-                                null
-                            ) {
-                                withContext(Dispatchers.IO) { database.song(currentMediaId).first() }
-                            } else {
-                                null
-                            }
-                        val finalSong =
-                            (song ?: currentMetadata?.let { createTransientSongFromMedia(it) })
-                                .withResolvedPresenceDuration(player.duration)
-
-                        val success =
-                            withContext(Dispatchers.IO) {
-                                DiscordPresenceManager.updateNow(
-                                    context = this@MusicService,
-                                    token = token,
-                                    song = finalSong,
-                                    positionMs = currentPosition,
-                                    isPaused = !isPlaying,
-                                )
-                            }
-                        if (!success) {
-                            Timber
-                                .tag(
-                                    "MusicService",
-                                ).w("isPlaying/mediaTransition immediate presence update failed — restarting manager")
-                            if (DiscordPresenceManager.isRunning()) {
+                    val song =
+                        if (currentMediaId !=
+                            null
+                        ) {
+                            withContext(Dispatchers.IO) { database.song(currentMediaId).first() }
+                        } else {
+                            null
+                        }
+                    val finalSong =
+                        (song ?: currentMetadata?.let { createTransientSongFromMedia(it) })
+                            .withResolvedPresenceDuration(player.duration)
+                        ?: return@launch
+                    try {
+                        val lbEnabled = withContext(Dispatchers.IO) { dataStore.get(ListenBrainzEnabledKey, false) }
+                        val lbToken = withContext(Dispatchers.IO) { dataStore.get(ListenBrainzTokenKey, "") }
+                        if (lbEnabled && !lbToken.isNullOrBlank()) {
+                            scope.launch(Dispatchers.IO) {
                                 try {
-                                    DiscordPresenceManager.restart()
-                                } catch (_: Exception) {
+                                    ListenBrainzManager.submitPlayingNow(this@MusicService, lbToken, finalSong, currentPosition)
+                                } catch (ie: Exception) {
+                                    Timber
+                                        .tag(
+                                            "MusicService",
+                                        ).v(ie, "ListenBrainz playing_now submit failed for isPlaying/mediaTransition")
                                 }
                             }
                         }
-                        try {
-                            val lbEnabled = withContext(Dispatchers.IO) { dataStore.get(ListenBrainzEnabledKey, false) }
-                            val lbToken = withContext(Dispatchers.IO) { dataStore.get(ListenBrainzTokenKey, "") }
-                            if (lbEnabled && !lbToken.isNullOrBlank()) {
-                                scope.launch(Dispatchers.IO) {
-                                    try {
-                                        ListenBrainzManager.submitPlayingNow(this@MusicService, lbToken, finalSong, currentPosition)
-                                    } catch (ie: Exception) {
-                                        Timber
-                                            .tag(
-                                                "MusicService",
-                                            ).v(ie, "ListenBrainz playing_now submit failed for isPlaying/mediaTransition")
-                                    }
-                                }
-                            }
 
-                            // Last.fm now playing - handled by ScrobbleManager
-                        } catch (_: Exception) {
-                        }
+                        // Last.fm now playing - handled by ScrobbleManager
+                    } catch (_: Exception) {
                     }
                 } catch (e: Exception) {
-                    Timber.tag("MusicService").v(e, "immediate presence update failed for isPlaying/mediaTransition")
+                    Timber.tag("MusicService").v(e, "isPlaying/mediaTransition follow-up work failed")
                 }
             }
         }
