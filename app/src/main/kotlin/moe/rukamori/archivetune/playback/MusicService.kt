@@ -919,13 +919,16 @@ class MusicService :
 
         currentSong.debounce(300).collect(scope) { song ->
             updateNotification()
+            requestDiscordSync(
+                reason =
+                    if (song == null) {
+                        "current_song_cleared"
+                    } else {
+                        "current_song_changed"
+                    },
+            )
             if (song != null && player.playWhenReady && player.playbackState == Player.STATE_READY) {
                 ensurePresenceManager()
-            } else {
-                try {
-                    DiscordPresenceManager.stop()
-                } catch (_: Exception) {
-                }
             }
         }
 
@@ -1077,18 +1080,21 @@ class MusicService :
             .debounce(300)
             .distinctUntilChanged()
             .collectLatest(scope) { (key, enabled) ->
+                requestDiscordSync(
+                    reason =
+                        when {
+                            !enabled -> "discord_rpc_disabled"
+                            key.isNullOrBlank() -> "discord_token_missing"
+                            else -> "discord_token_or_toggle_changed"
+                        },
+                    force = !enabled || key.isNullOrBlank(),
+                )
                 if (!key.isNullOrBlank() && enabled) {
                     if (player.playbackState == Player.STATE_READY && player.playWhenReady) {
                         currentSong.value?.let {
                             ensurePresenceManager()
                         }
                     }
-                } else {
-                    try {
-                        DiscordPresenceManager.stop()
-                    } catch (_: Exception) {
-                    }
-                    lastPresenceToken = null
                 }
             }
 
