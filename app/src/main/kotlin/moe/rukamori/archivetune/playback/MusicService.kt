@@ -5045,6 +5045,15 @@ class MusicService :
             if (!isCrossfading || playbackState == Player.STATE_IDLE) {
                 cancelCrossfade(resetVolume = true, resetPauseAtEnd = true)
             }
+            // Final guard: bootstrap infinite queue when playback fully ends
+            if (!suppressAutoPlayback &&
+                playbackState == Player.STATE_ENDED &&
+                dataStore.get(AutoLoadMoreKey, true) &&
+                player.repeatMode == REPEAT_MODE_OFF &&
+                player.currentMediaItem != null
+            ) {
+                onInfiniteQueueEnabled()
+            }
         } else if (playbackState == Player.STATE_READY) {
             scheduleCrossfade()
         }
