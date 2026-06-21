@@ -162,8 +162,7 @@ fun DiscordSettings(
         if (discordRPC && discordToken.isNotBlank()) {
             Timber.tag("DiscordSettings").d("Discord Rich Presence enabled, MusicService will handle start")
         } else {
-            Timber.tag("DiscordSettings").d("Discord Rich Presence disabled or not authorized, stopping manager")
-            DiscordPresenceManager.stop()
+            Timber.tag("DiscordSettings").d("Discord Rich Presence disabled or not authorized, MusicService will handle stop")
         }
     }
 
@@ -721,7 +720,6 @@ fun DiscordSettings(
                             authorizedUsername = ""
                             authorizedName = ""
                             authorizedAvatarUrl = ""
-                            DiscordPresenceManager.stop()
                             authorizationUiModeName = DiscordAuthorizationUiMode.Idle.name
                             authorizationMessage = null
                             authorizationSession = DiscordOAuthRepository.createAuthorizationSession()

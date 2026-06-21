@@ -298,26 +298,8 @@ fun Thumbnail(
 
         if (currentItem > currentMediaIndex && canSkipNext) {
             playerConnection.player.seekToNext()
-            if (moe.rukamori.archivetune.ui.screens.settings.DiscordPresenceManager
-                    .isRunning()
-            ) {
-                try {
-                    moe.rukamori.archivetune.ui.screens.settings.DiscordPresenceManager
-                        .restart()
-                } catch (_: Exception) {
-                }
-            }
         } else if (currentItem < currentMediaIndex && canSkipPrevious) {
             playerConnection.player.seekToPreviousMediaItem()
-            if (moe.rukamori.archivetune.ui.screens.settings.DiscordPresenceManager
-                    .isRunning()
-            ) {
-                try {
-                    moe.rukamori.archivetune.ui.screens.settings.DiscordPresenceManager
-                        .restart()
-                } catch (_: Exception) {
-                }
-            }
         }
     }
 
