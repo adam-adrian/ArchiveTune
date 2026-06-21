@@ -101,6 +101,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -132,6 +133,7 @@ import moe.rukamori.archivetune.constants.CrossfadeDurationKey
 import moe.rukamori.archivetune.constants.CrossfadeEnabledKey
 import moe.rukamori.archivetune.constants.CrossfadeGaplessKey
 import moe.rukamori.archivetune.constants.DeviceMutePlaybackRecoveryVolumeKey
+import moe.rukamori.archivetune.constants.DiscordShowWhenPausedKey
 import moe.rukamori.archivetune.constants.DiscordTokenKey
 import moe.rukamori.archivetune.constants.EnableDiscordRPCKey
 import moe.rukamori.archivetune.constants.EnableLastFMScrobblingKey
@@ -389,6 +391,15 @@ class MusicService :
     private var lastPresenceToken: String? = null
 
     @Volatile
+    private var pausedPresenceGate = PausedPresenceGate.FollowPreference
+
+    @Volatile
+    private var lastDiscordPresenceDecision: DiscordPresenceDecision? = null
+    private val discordSyncEpoch = AtomicLong(0L)
+    private val discordSyncRequests = Channel<DiscordSyncRequest>(Channel.CONFLATED)
+    private var discordSyncWorkerJob: Job? = null
+
+    @Volatile
     private var lastLoginRecoveryPrompt: Pair<String, Long>? = null
     private val playbackStreamRecoveryTracker = PlaybackStreamRecoveryTracker()
     private var nextHistorySessionToken = 0L
@@ -457,6 +468,14 @@ class MusicService :
         val durationSeconds: Float,
         val gapless: Boolean,
     )
+
+    private data class DiscordSyncRequest(
+        val epoch: Long,
+        val reason: String,
+        val force: Boolean,
+    )
+
+    private class StaleDiscordSyncException : CancellationException("Stale Discord sync request")
 
     private data class CrossfadeTarget(
         val index: Int,
@@ -1203,6 +1222,101 @@ class MusicService :
         if (!ioScope.isActive) {
             ioScope = CoroutineScope(Dispatchers.IO + scopeJob)
         }
+        startDiscordSyncWorker()
+    }
+
+    private fun startDiscordSyncWorker() {
+        if (discordSyncWorkerJob?.isActive == true) return
+        discordSyncWorkerJob =
+            scope.launch(Dispatchers.IO) {
+                for (request in discordSyncRequests) {
+                    try {
+                        syncDiscordStateInternal(request)
+                    } catch (_: StaleDiscordSyncException) {
+                        Timber.tag(DISCORD_SYNC_TAG).d(
+                            "stale sync aborted epoch=%d reason=%s",
+                            request.epoch,
+                            request.reason,
+                        )
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        Timber.tag(DISCORD_SYNC_TAG).e(
+                            error,
+                            "sync failed epoch=%d reason=%s",
+                            request.epoch,
+                            request.reason,
+                        )
+                    }
+                }
+            }
+    }
+
+    private fun requestDiscordSync(
+        reason: String,
+        force: Boolean = false,
+    ) {
+        val request =
+            DiscordSyncRequest(
+                epoch = discordSyncEpoch.incrementAndGet(),
+                reason = reason,
+                force = force,
+            )
+        if (discordSyncRequests.trySend(request).isFailure) {
+            Timber.tag(DISCORD_SYNC_TAG).w(
+                "failed to enqueue sync epoch=%d reason=%s",
+                request.epoch,
+                request.reason,
+            )
+        }
+    }
+
+    private fun ensureDiscordSyncFresh(epoch: Long) {
+        if (epoch != discordSyncEpoch.get()) {
+            throw StaleDiscordSyncException()
+        }
+    }
+
+    private suspend fun syncDiscordStateInternal(request: DiscordSyncRequest) {
+        ensureDiscordSyncFresh(request.epoch)
+
+        val song = currentSong.value
+        val enabled = dataStore.get(EnableDiscordRPCKey, true)
+        val hasToken = dataStore.get(DiscordTokenKey, "").isNotBlank()
+        val showWhenPaused = dataStore.get(DiscordShowWhenPausedKey, false)
+        val isPlaying = withContext(Dispatchers.Main.immediate) { player.isPlaying }
+
+        val decision =
+            deriveDiscordPresenceDecision(
+                DiscordPresenceInputs(
+                    enabled = enabled,
+                    hasToken = hasToken,
+                    song = song,
+                    isPlaying = isPlaying,
+                    showWhenPaused = showWhenPaused,
+                    pausedPresenceGate = pausedPresenceGate,
+                ),
+            )
+
+        ensureDiscordSyncFresh(request.epoch)
+
+        if (request.force || decision != lastDiscordPresenceDecision) {
+            Timber.tag(DISCORD_SYNC_TAG).d(
+                "sync epoch=%d reason=%s force=%s decision=%s",
+                request.epoch,
+                request.reason,
+                request.force,
+                decision,
+            )
+        } else {
+            Timber.tag(DISCORD_SYNC_TAG).v(
+                "sync epoch=%d reason=%s unchanged decision=%s",
+                request.epoch,
+                request.reason,
+                decision,
+            )
+        }
+        lastDiscordPresenceDecision = decision
     }
 
     private fun cancelRestoredQueueHydration() {
@@ -6908,6 +7022,7 @@ class MusicService :
         const val ONLINE_PLAYLIST = "online_playlist"
 
         private const val TAG = "MusicService"
+        private const val DISCORD_SYNC_TAG = "DiscordSync"
         const val CHANNEL_ID = "music_channel_01"
         const val NOTIFICATION_ID = 888
         const val ERROR_CODE_NO_STREAM = 1000001
