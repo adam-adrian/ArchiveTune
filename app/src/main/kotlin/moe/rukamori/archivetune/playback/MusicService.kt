@@ -87,7 +87,6 @@ import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.session.CommandButton
-import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaController
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
@@ -863,14 +862,10 @@ class MusicService :
                 ).setBitmapLoader(CoilBitmapLoader(this, scope))
                 .build()
         setMediaNotificationProvider(
-            DefaultMediaNotificationProvider(
-                this,
-                { NOTIFICATION_ID },
-                CHANNEL_ID,
-                R.string.music_player,
-            ).apply {
-                setSmallIcon(R.drawable.small_icon)
-            },
+            ArchiveTuneMediaNotificationProvider(
+                context = this,
+                smallIconResId = R.drawable.small_icon,
+            ),
         )
 
         updateNotification()
@@ -6945,11 +6940,42 @@ class MusicService :
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = mediaSession
 
+    private fun handleMediaNotificationDismissed(intent: Intent) {
+        val originalDeleteIntent =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(
+                    EXTRA_MEDIA_NOTIFICATION_DELETE_INTENT,
+                    PendingIntent::class.java,
+                )
+            } else {
+                intent.getParcelableExtra(EXTRA_MEDIA_NOTIFICATION_DELETE_INTENT)
+            }
+
+        if (!player.isPlaying) {
+            pausedPresenceGate = PausedPresenceGate.HiddenByNotificationDismiss
+            requestDiscordSync(
+                reason = "notification_dismissed_while_paused",
+                force = true,
+            )
+        }
+
+        runCatching {
+            originalDeleteIntent?.send()
+        }.onFailure {
+            Timber.tag(DISCORD_SYNC_TAG).w(it, "failed to forward original notification delete intent")
+        }
+    }
+
     override fun onStartCommand(
         intent: Intent?,
         flags: Int,
         startId: Int,
     ): Int {
+        if (intent?.action == ACTION_MEDIA_NOTIFICATION_DISMISSED) {
+            handleMediaNotificationDismissed(intent)
+            return START_NOT_STICKY
+        }
+
         ensureStartedAsForeground()
         when (intent?.action) {
             "moe.rukamori.archivetune.WIDGET_PLAY_PAUSE" -> {
@@ -7024,6 +7050,10 @@ class MusicService :
         private const val TAG = "MusicService"
         private const val DISCORD_SYNC_TAG = "DiscordSync"
         const val CHANNEL_ID = "music_channel_01"
+        const val ACTION_MEDIA_NOTIFICATION_DISMISSED =
+            "moe.rukamori.archivetune.action.MEDIA_NOTIFICATION_DISMISSED"
+        const val EXTRA_MEDIA_NOTIFICATION_DELETE_INTENT =
+            "moe.rukamori.archivetune.extra.MEDIA_NOTIFICATION_DELETE_INTENT"
         const val NOTIFICATION_ID = 888
         const val ERROR_CODE_NO_STREAM = 1000001
         const val CHUNK_LENGTH = 8 * 1024 * 1024L
