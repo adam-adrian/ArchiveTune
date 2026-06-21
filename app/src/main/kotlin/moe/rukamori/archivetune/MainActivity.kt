@@ -268,7 +268,6 @@ import moe.rukamori.archivetune.ui.screens.search.OnlineSearchScreen
 import moe.rukamori.archivetune.ui.screens.search.decodeOnlineSearchQuery
 import moe.rukamori.archivetune.ui.screens.search.onlineSearchResultRoute
 import moe.rukamori.archivetune.ui.screens.settings.DarkMode
-import moe.rukamori.archivetune.ui.screens.settings.DiscordPresenceManager
 import moe.rukamori.archivetune.ui.screens.settings.NavigationTab
 import moe.rukamori.archivetune.ui.theme.ArchiveTuneTheme
 import moe.rukamori.archivetune.ui.theme.ColorSaver
@@ -424,14 +423,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // Only clear/stop presence when the activity is actually finishing (not on rotation)
-        // and do not clear it for transient configuration changes.
-        if (isFinishing && !isChangingConfigurations) {
-            try {
-                DiscordPresenceManager.stop()
-            } catch (_: Exception) {
-            }
-        }
 
         val shouldStopOnTaskClear =
             if (!isFinishing) {
