@@ -24,10 +24,16 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import moe.rukamori.archivetune.constants.DiscordShowWhenPausedKey
 import moe.rukamori.archivetune.db.entities.Song
 import moe.rukamori.archivetune.discord.DiscordOAuthRepository
+import moe.rukamori.archivetune.playback.DiscordPresenceDecision
+import moe.rukamori.archivetune.playback.DiscordPresenceInputs
+import moe.rukamori.archivetune.playback.deriveDiscordPresenceDecision
 import moe.rukamori.archivetune.utils.DiscordImageResolver
 import moe.rukamori.archivetune.utils.DiscordRPC
+import moe.rukamori.archivetune.utils.dataStore
+import moe.rukamori.archivetune.utils.get
 import timber.log.Timber
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -136,6 +142,30 @@ object DiscordPresenceManager {
                         setLastRpcTimestamps(null, null)
                         consecutiveFailures = 0
                         Timber.tag(LOG_TAG).d("cleared presence because no song is active")
+                        return@withLock true
+                    }
+
+                    val showWhenPaused = appContext.dataStore[DiscordShowWhenPausedKey] ?: false
+                    val visibilityDecision =
+                        deriveDiscordPresenceDecision(
+                            DiscordPresenceInputs(
+                                enabled = true,
+                                hasToken = true,
+                                song = song,
+                                isPlaying = !isPaused,
+                                showWhenPaused = showWhenPaused,
+                            ),
+                        )
+
+                    if (visibilityDecision is DiscordPresenceDecision.Hidden) {
+                        val rpc = getOrCreateRpc(appContext, activeToken)
+                        rpc.stopActivity()
+                        setLastRpcTimestamps(null, null)
+                        consecutiveFailures = 0
+                        Timber.tag(LOG_TAG).d(
+                            "cleared presence because visibility policy hid it reason=%s",
+                            visibilityDecision.reason,
+                        )
                         return@withLock true
                     }
 
