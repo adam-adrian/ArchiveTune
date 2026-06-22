@@ -486,6 +486,13 @@ class MusicService :
         val force: Boolean,
     )
 
+    private data class Quadruple<A, B, C, D>(
+        val first: A,
+        val second: B,
+        val third: C,
+        val fourth: D,
+    )
+
     private class StaleDiscordSyncException : CancellationException("Stale Discord sync request")
 
     private data class CrossfadeTarget(
@@ -1337,33 +1344,49 @@ class MusicService :
         val token = dataStore.get(DiscordTokenKey, "")
         val hasToken = token.isNotBlank()
         val showWhenPaused = dataStore.get(DiscordShowWhenPausedKey, false)
-        val (song, isPlaying) =
+        val (song, isPlaying, playWhenReady, playbackState) =
             withContext(Dispatchers.Main.immediate) {
-                currentPresenceSong() to player.isPlaying
+                Quadruple(
+                    currentPresenceSong(),
+                    player.isPlaying,
+                    player.playWhenReady,
+                    player.playbackState,
+                )
             }
 
-        if (isPlaying && pausedPresenceGate != PausedPresenceGate.FollowPreference) {
+        if (playWhenReady && pausedPresenceGate != PausedPresenceGate.FollowPreference) {
             pausedPresenceGate = PausedPresenceGate.FollowPreference
             Timber.tag(DISCORD_SYNC_TAG).d(
-                "sync epoch=%d reason=%s reset paused gate because playback resumed",
+                "sync epoch=%d reason=%s reset paused gate because playback intent resumed",
                 request.epoch,
                 request.reason,
             )
         }
 
-        val decision =
-            deriveDiscordPresenceDecision(
-                DiscordPresenceInputs(
-                    enabled = enabled,
-                    hasToken = hasToken,
-                    song = song,
-                    isPlaying = isPlaying,
-                    showWhenPaused = showWhenPaused,
-                    pausedPresenceGate = pausedPresenceGate,
-                    serviceStopping = discordServiceStopping,
-                ),
+        val resolution =
+            deriveFinalDiscordPresenceDecision(
+                input =
+                    DiscordPresenceInputs(
+                        enabled = enabled,
+                        hasToken = hasToken,
+                        song = song,
+                        isPlaying = isPlaying,
+                        showWhenPaused = showWhenPaused,
+                        pausedPresenceGate = pausedPresenceGate,
+                        serviceStopping = discordServiceStopping,
+                        playWhenReady = playWhenReady,
+                        playbackState = playbackState,
+                    ),
+                holdContext =
+                    DiscordHoldContext(
+                        nowMs = System.currentTimeMillis(),
+                        activeHoldState = activeDiscordHoldState,
+                        lastAppliedVisiblePresence = lastAppliedVisiblePresence,
+                        holdTimeoutMs = DISCORD_HOLD_TIMEOUT_MS,
+                    ),
             )
 
+        val decision = resolution.decision
         ensureDiscordSyncFresh(request.epoch)
 
         if (!request.force && decision == lastDiscordPresenceDecision) {
@@ -1377,17 +1400,18 @@ class MusicService :
         }
 
         Timber.tag(DISCORD_SYNC_TAG).d(
-            "sync epoch=%d reason=%s force=%s decision=%s",
+            "sync epoch=%d reason=%s force=%s decision=%s holdState=%s",
             request.epoch,
             request.reason,
             request.force,
             decision,
+            resolution.nextHoldState,
         )
 
         val applied =
             applyDiscordPresenceDecision(
                 request = request,
-                decision = decision,
+                resolution = resolution,
                 token = token,
                 song = song,
                 isPlaying = isPlaying,
@@ -1400,19 +1424,23 @@ class MusicService :
 
     private suspend fun applyDiscordPresenceDecision(
         request: DiscordSyncRequest,
-        decision: DiscordPresenceDecision,
+        resolution: DiscordPresenceResolution,
         token: String,
         song: Song?,
         isPlaying: Boolean,
     ): Boolean {
         ensureDiscordSyncFresh(request.epoch)
 
+        val decision = resolution.decision
         return when (decision) {
             is DiscordPresenceDecision.Hidden -> {
+                clearDiscordHoldState()
                 when (decision.reason) {
                     HiddenReason.NoSong,
                     HiddenReason.PausedByPreference,
                     HiddenReason.PausedByNotificationDismiss,
+                    HiddenReason.NoStablePlaybackYet,
+                    HiddenReason.PlaybackStalled,
                     -> {
                         ensureDiscordSyncFresh(request.epoch)
                         val cleared =
@@ -1442,6 +1470,7 @@ class MusicService :
             }
 
             is DiscordPresenceDecision.Visible -> {
+                clearDiscordHoldState()
                 ensureDiscordSyncFresh(request.epoch)
                 val snapshot = buildDiscordPresenceSnapshot(song, isPlaying) ?: return false
                 ensureDiscordSyncFresh(request.epoch)
@@ -1464,8 +1493,14 @@ class MusicService :
                     if (token.isNotBlank()) {
                         lastPresenceToken = token
                     }
+                    markLastAppliedVisiblePresence(decision)
                     true
                 }
+            }
+
+            is DiscordPresenceDecision.Hold -> {
+                updateActiveDiscordHoldState(resolution.nextHoldState)
+                true
             }
         }
     }
