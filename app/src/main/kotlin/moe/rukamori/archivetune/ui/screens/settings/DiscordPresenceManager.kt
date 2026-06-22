@@ -86,6 +86,11 @@ object DiscordPresenceManager {
     ): DiscordRPC {
         val activeToken = DiscordOAuthRepository.getValidAccessToken(context) ?: token
         if (rpcInstance == null || rpcToken != activeToken) {
+            Timber.tag(LOG_TAG).d(
+                "creating new DiscordRPC instance tokenChanged=%s hadExisting=%s",
+                rpcToken != activeToken,
+                rpcInstance != null,
+            )
             runCatching { rpcInstance?.stopActivity() }
                 .onFailure { Timber.tag(LOG_TAG).v(it, "failed to stop previous activity") }
             runCatching { rpcInstance?.closeRPC() }
@@ -93,6 +98,8 @@ object DiscordPresenceManager {
 
             rpcInstance = DiscordRPC(context.applicationContext, activeToken)
             rpcToken = activeToken
+        } else {
+            Timber.tag(LOG_TAG).v("reusing existing DiscordRPC instance")
         }
         return rpcInstance ?: error("Discord RPC instance was not created")
     }
@@ -121,6 +128,11 @@ object DiscordPresenceManager {
             val appContext = context.applicationContext
             rpcMutex.withLock {
                 try {
+                    Timber.tag(LOG_TAG).d(
+                        "clearNow tokenProvided=%s hasRpcInstance=%s",
+                        !token.isNullOrBlank(),
+                        rpcInstance != null,
+                    )
                     clearPresenceLocked(appContext, token)
                 } catch (error: CancellationException) {
                     throw error
@@ -149,6 +161,14 @@ object DiscordPresenceManager {
 
                 try {
                     val activeToken = DiscordOAuthRepository.getValidAccessToken(appContext) ?: token
+                    Timber.tag(LOG_TAG).d(
+                        "updatePresence start songId=%s paused=%s positionMs=%d tokenPresent=%s generation=%d",
+                        song?.song?.id,
+                        isPaused,
+                        positionMs,
+                        activeToken.isNotBlank(),
+                        generation,
+                    )
                     if (activeToken.isBlank()) {
                         Timber.tag(LOG_TAG).w("updatePresence skipped because token is missing")
                         return@withLock false
@@ -175,6 +195,11 @@ object DiscordPresenceManager {
                         )
 
                     if (visibilityDecision is DiscordPresenceDecision.Hidden) {
+                        Timber.tag(LOG_TAG).d(
+                            "updatePresence resolved hidden visibility reason=%s for songId=%s",
+                            visibilityDecision.reason,
+                            song.song.id,
+                        )
                         val cleared = clearPresenceLocked(appContext, activeToken)
                         if (cleared) {
                             Timber.tag(LOG_TAG).d(
@@ -234,6 +259,7 @@ object DiscordPresenceManager {
     ): Boolean {
         val existingRpc = rpcInstance
         if (existingRpc != null) {
+            Timber.tag(LOG_TAG).d("clearPresenceLocked using existing RPC instance")
             existingRpc.stopActivity()
             setLastRpcTimestamps(null, null)
             consecutiveFailures = 0
@@ -246,6 +272,7 @@ object DiscordPresenceManager {
             return false
         }
 
+        Timber.tag(LOG_TAG).d("clearPresenceLocked creating RPC instance for clear")
         val rpc = getOrCreateRpc(context, activeToken)
         rpc.stopActivity()
         setLastRpcTimestamps(null, null)

@@ -1294,6 +1294,11 @@ class MusicService :
     private fun updateActiveDiscordHoldState(nextHoldState: ActiveHoldState?) {
         val previousHoldState = activeDiscordHoldState
         activeDiscordHoldState = nextHoldState
+        Timber.tag(DISCORD_SYNC_TAG).d(
+            "hold state transition previous=%s next=%s",
+            previousHoldState,
+            nextHoldState,
+        )
         reconcileDiscordHoldTimeoutJob(previousHoldState, nextHoldState)
     }
 
@@ -1301,16 +1306,34 @@ class MusicService :
         previousHoldState: ActiveHoldState?,
         nextHoldState: ActiveHoldState?,
     ) {
-        if (previousHoldState === nextHoldState) return
+        if (previousHoldState === nextHoldState) {
+            Timber.tag(DISCORD_SYNC_TAG).v("hold timeout job unchanged for holdState=%s", nextHoldState)
+            return
+        }
 
+        if (activeDiscordHoldTimeoutJob != null) {
+            Timber.tag(DISCORD_SYNC_TAG).d("cancelling previous hold timeout job state=%s", previousHoldState)
+        }
         activeDiscordHoldTimeoutJob?.cancel()
         activeDiscordHoldTimeoutJob = null
 
-        if (nextHoldState == null) return
+        if (nextHoldState == null) {
+            Timber.tag(DISCORD_SYNC_TAG).d("no active hold state, no timeout job scheduled")
+            return
+        }
 
+        Timber.tag(DISCORD_SYNC_TAG).d(
+            "scheduling hold timeout job state=%s timeoutMs=%d",
+            nextHoldState,
+            DISCORD_HOLD_TIMEOUT_MS,
+        )
         activeDiscordHoldTimeoutJob =
             scope.launch {
                 delay(DISCORD_HOLD_TIMEOUT_MS)
+                Timber.tag(DISCORD_SYNC_TAG).d(
+                    "hold timeout fired state=%s -> enqueue resync",
+                    nextHoldState,
+                )
                 requestDiscordSync(
                     reason = "hold_timeout_check",
                     force = true,
@@ -1319,6 +1342,9 @@ class MusicService :
     }
 
     private fun clearDiscordHoldState() {
+        if (activeDiscordHoldState != null) {
+            Timber.tag(DISCORD_SYNC_TAG).d("clearing active hold state=%s", activeDiscordHoldState)
+        }
         updateActiveDiscordHoldState(null)
     }
 
@@ -1329,6 +1355,11 @@ class MusicService :
                 mode = visibleDecision.mode,
                 appliedAtMs = System.currentTimeMillis(),
             )
+        Timber.tag(DISCORD_SYNC_TAG).d(
+            "marked last applied visible presence songId=%s mode=%s",
+            visibleDecision.songId,
+            visibleDecision.mode,
+        )
     }
 
     private fun ensureDiscordSyncFresh(epoch: Long) {
@@ -1363,28 +1394,28 @@ class MusicService :
             )
         }
 
-        val resolution =
-            deriveFinalDiscordPresenceDecision(
-                input =
-                    DiscordPresenceInputs(
-                        enabled = enabled,
-                        hasToken = hasToken,
-                        song = song,
-                        isPlaying = isPlaying,
-                        showWhenPaused = showWhenPaused,
-                        pausedPresenceGate = pausedPresenceGate,
-                        serviceStopping = discordServiceStopping,
-                        playWhenReady = playWhenReady,
-                        playbackState = playbackState,
-                    ),
-                holdContext =
-                    DiscordHoldContext(
-                        nowMs = System.currentTimeMillis(),
-                        activeHoldState = activeDiscordHoldState,
-                        lastAppliedVisiblePresence = lastAppliedVisiblePresence,
-                        holdTimeoutMs = DISCORD_HOLD_TIMEOUT_MS,
-                    ),
+        val inputs =
+            DiscordPresenceInputs(
+                enabled = enabled,
+                hasToken = hasToken,
+                song = song,
+                isPlaying = isPlaying,
+                showWhenPaused = showWhenPaused,
+                pausedPresenceGate = pausedPresenceGate,
+                serviceStopping = discordServiceStopping,
+                playWhenReady = playWhenReady,
+                playbackState = playbackState,
             )
+        val holdContext =
+            DiscordHoldContext(
+                nowMs = System.currentTimeMillis(),
+                activeHoldState = activeDiscordHoldState,
+                lastAppliedVisiblePresence = lastAppliedVisiblePresence,
+                holdTimeoutMs = DISCORD_HOLD_TIMEOUT_MS,
+            )
+        val semanticState = derivePlaybackSemanticState(inputs)
+        val rawDecision = deriveRawDiscordPresenceDecision(inputs, semanticState)
+        val resolution = resolveDiscordPresenceDecision(rawDecision, holdContext)
 
         val decision = resolution.decision
         ensureDiscordSyncFresh(request.epoch)
@@ -1400,12 +1431,19 @@ class MusicService :
         }
 
         Timber.tag(DISCORD_SYNC_TAG).d(
-            "sync epoch=%d reason=%s force=%s decision=%s holdState=%s",
+            "sync epoch=%d reason=%s force=%s songId=%s playWhenReady=%s playbackState=%d isPlaying=%s semantic=%s raw=%s decision=%s holdState=%s lastAppliedVisible=%s",
             request.epoch,
             request.reason,
             request.force,
+            song?.song?.id,
+            playWhenReady,
+            playbackState,
+            isPlaying,
+            semanticState,
+            rawDecision,
             decision,
             resolution.nextHoldState,
+            lastAppliedVisiblePresence,
         )
 
         val applied =
@@ -1432,6 +1470,14 @@ class MusicService :
         ensureDiscordSyncFresh(request.epoch)
 
         val decision = resolution.decision
+        Timber.tag(DISCORD_SYNC_TAG).d(
+            "apply decision epoch=%d decision=%s tokenPresent=%s songId=%s isPlaying=%s",
+            request.epoch,
+            decision,
+            token.isNotBlank() || !lastPresenceToken.isNullOrBlank(),
+            song?.song?.id,
+            isPlaying,
+        )
         return when (decision) {
             is DiscordPresenceDecision.Hidden -> {
                 clearDiscordHoldState()

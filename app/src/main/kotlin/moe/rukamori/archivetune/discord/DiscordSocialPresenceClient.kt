@@ -33,17 +33,31 @@ object DiscordSocialPresenceClient {
             mutex.withLock {
                 val token = accessToken.trim()
                 if (token.isBlank()) {
+                    Timber.tag(TAG).w("updatePresence skipped because token is blank")
                     return@withLock Result.failure(IllegalArgumentException("Discord access token is missing"))
                 }
 
+                Timber.tag(TAG).d(
+                    "updatePresence activityName=%s type=%s details=%s state=%s activeTokenMatches=%s",
+                    activity.name,
+                    activity.type,
+                    activity.details,
+                    activity.state,
+                    activeToken == token,
+                )
                 val connectResult = ensureConnected(token)
-                if (connectResult.isFailure) return@withLock connectResult
+                if (connectResult.isFailure) {
+                    Timber.tag(TAG).w(connectResult.exceptionOrNull(), "updatePresence failed during ensureConnected")
+                    return@withLock connectResult
+                }
 
                 val presenceJson = buildPresencePayload(token, activity)
                 val sent = gateway?.sendPresenceUpdate(presenceJson) ?: false
                 if (!sent) {
+                    Timber.tag(TAG).w("updatePresence sendPresenceUpdate returned false")
                     return@withLock Result.failure(Exception("Failed to send presence update"))
                 }
+                Timber.tag(TAG).d("updatePresence dispatched successfully")
                 Result.success(Unit)
             }
         }
@@ -51,6 +65,11 @@ object DiscordSocialPresenceClient {
     suspend fun clearPresence(accessToken: String? = null): Result<Unit> =
         withContext(Dispatchers.IO) {
             mutex.withLock {
+                Timber.tag(TAG).d(
+                    "clearPresence tokenProvided=%s gatewayPresent=%s",
+                    !accessToken.isNullOrBlank(),
+                    gateway != null,
+                )
                 var g = gateway
                 if (g == null && !accessToken.isNullOrBlank()) {
                     ensureConnected(accessToken)
@@ -83,8 +102,16 @@ object DiscordSocialPresenceClient {
         }
 
     private fun ensureConnected(token: String): Result<Unit> {
-        if (activeToken == token && gateway != null) return Result.success(Unit)
+        if (activeToken == token && gateway != null) {
+            Timber.tag(TAG).v("ensureConnected reusing existing gateway session")
+            return Result.success(Unit)
+        }
 
+        Timber.tag(TAG).d(
+            "ensureConnected creating new gateway session tokenChanged=%s hadGateway=%s",
+            activeToken != token,
+            gateway != null,
+        )
         gateway?.disconnect()
         gateway = null
         scope?.cancel()
@@ -100,6 +127,9 @@ object DiscordSocialPresenceClient {
             scope = newScope
             gateway = newGateway
             activeToken = token
+            Timber.tag(TAG).d("ensureConnected connected successfully")
+        }.onFailure {
+            Timber.tag(TAG).e(it, "ensureConnected failed")
         }
     }
 
