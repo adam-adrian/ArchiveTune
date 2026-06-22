@@ -5361,7 +5361,6 @@ class MusicService :
             onInfiniteQueueEnabled()
         }
 
-        ensurePresenceManager()
         requestDiscordSync(
             reason = "media_item_transition",
             force = true,
@@ -5628,13 +5627,8 @@ class MusicService :
         }
 
         if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED)) {
-            ensurePresenceManager()
             // Scrobble: Track play/pause state
             scrobbleManager?.onPlayerStateChanged(player.isPlaying, player.currentMetadata, duration = player.duration)
-        } else if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
-            ensurePresenceManager()
-        } else {
-            ensurePresenceManager()
         }
 
         // Persist queue on play/pause so a force-stop right after pausing still restores the correct position
