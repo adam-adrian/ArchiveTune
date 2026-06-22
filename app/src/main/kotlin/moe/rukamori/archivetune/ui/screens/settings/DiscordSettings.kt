@@ -503,13 +503,7 @@ fun DiscordSettings(
                                             coroutineScope.launch {
                                                 isRefreshing = true
                                                 val success =
-                                                    DiscordPresenceManager.updatePresence(
-                                                        context = context,
-                                                        token = discordToken,
-                                                        song = song,
-                                                        positionMs = playerConnection.player.currentPosition,
-                                                        isPaused = !playerConnection.player.isPlaying,
-                                                    )
+                                                    playerConnection.service.refreshDiscordNow()
                                                 isRefreshing = false
                                                 snackbarHostState.showSnackbar(
                                                     message =

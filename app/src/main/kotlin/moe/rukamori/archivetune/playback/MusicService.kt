@@ -100,6 +100,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -117,6 +118,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import moe.rukamori.archivetune.MainActivity
 import moe.rukamori.archivetune.R
@@ -409,6 +412,8 @@ class MusicService :
     private val discordSyncEpoch = AtomicLong(0L)
     private val discordSyncRequests = Channel<DiscordSyncRequest>(Channel.CONFLATED)
     private var discordSyncWorkerJob: Job? = null
+    private val pendingDiscordRefreshWaiters = mutableListOf<CompletableDeferred<Boolean>>()
+    private val discordRefreshWaitersMutex = Mutex()
 
     @Volatile
     private var lastLoginRecoveryPrompt: Pair<String, Long>? = null
@@ -1362,6 +1367,57 @@ class MusicService :
         )
     }
 
+    private suspend fun addPendingDiscordRefreshWaiter(waiter: CompletableDeferred<Boolean>) {
+        discordRefreshWaitersMutex.withLock {
+            pendingDiscordRefreshWaiters += waiter
+        }
+    }
+
+    private suspend fun takePendingDiscordRefreshWaiters(): List<CompletableDeferred<Boolean>> =
+        discordRefreshWaitersMutex.withLock {
+            val snapshot = pendingDiscordRefreshWaiters.toList()
+            pendingDiscordRefreshWaiters.removeAll(snapshot)
+            snapshot
+        }
+
+    private suspend fun requeueDiscordRefreshWaiters(waiters: List<CompletableDeferred<Boolean>>) {
+        if (waiters.isEmpty()) return
+        discordRefreshWaitersMutex.withLock {
+            waiters.forEach { waiter ->
+                if (!waiter.isCompleted && !waiter.isCancelled) {
+                    pendingDiscordRefreshWaiters += waiter
+                }
+            }
+        }
+    }
+
+    private fun completeDiscordRefreshWaiters(
+        waiters: List<CompletableDeferred<Boolean>>,
+        result: Boolean,
+    ) {
+        waiters.forEach { waiter ->
+            if (!waiter.isCompleted && !waiter.isCancelled) {
+                waiter.complete(result)
+            }
+        }
+    }
+
+    suspend fun refreshDiscordNow(): Boolean {
+        val waiter = CompletableDeferred<Boolean>()
+        addPendingDiscordRefreshWaiter(waiter)
+        requestDiscordSync(
+            reason = "manual_refresh",
+            force = true,
+        )
+        return try {
+            withTimeout(10_000L) { waiter.await() }
+        } catch (error: CancellationException) {
+            false
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun ensureDiscordSyncFresh(epoch: Long) {
         if (epoch != discordSyncEpoch.get()) {
             throw StaleDiscordSyncException()
@@ -1369,94 +1425,116 @@ class MusicService :
     }
 
     private suspend fun syncDiscordStateInternal(request: DiscordSyncRequest) {
-        ensureDiscordSyncFresh(request.epoch)
+        val refreshWaiters = takePendingDiscordRefreshWaiters()
+        try {
+            ensureDiscordSyncFresh(request.epoch)
 
-        val enabled = dataStore.get(EnableDiscordRPCKey, true)
-        val token = dataStore.get(DiscordTokenKey, "")
-        val hasToken = token.isNotBlank()
-        val showWhenPaused = dataStore.get(DiscordShowWhenPausedKey, false)
-        val (song, isPlaying, playWhenReady, playbackState) =
-            withContext(Dispatchers.Main.immediate) {
-                Quadruple(
-                    currentPresenceSong(),
-                    player.isPlaying,
-                    player.playWhenReady,
-                    player.playbackState,
+            val enabled = dataStore.get(EnableDiscordRPCKey, true)
+            val token = dataStore.get(DiscordTokenKey, "")
+            val hasToken = token.isNotBlank()
+            val showWhenPaused = dataStore.get(DiscordShowWhenPausedKey, false)
+            val (song, isPlaying, playWhenReady, playbackState) =
+                withContext(Dispatchers.Main.immediate) {
+                    Quadruple(
+                        currentPresenceSong(),
+                        player.isPlaying,
+                        player.playWhenReady,
+                        player.playbackState,
+                    )
+                }
+
+            if (playWhenReady && pausedPresenceGate != PausedPresenceGate.FollowPreference) {
+                pausedPresenceGate = PausedPresenceGate.FollowPreference
+                Timber.tag(DISCORD_SYNC_TAG).d(
+                    "sync epoch=%d reason=%s reset paused gate because playback intent resumed",
+                    request.epoch,
+                    request.reason,
                 )
             }
 
-        if (playWhenReady && pausedPresenceGate != PausedPresenceGate.FollowPreference) {
-            pausedPresenceGate = PausedPresenceGate.FollowPreference
+            val inputs =
+                DiscordPresenceInputs(
+                    enabled = enabled,
+                    hasToken = hasToken,
+                    song = song,
+                    isPlaying = isPlaying,
+                    showWhenPaused = showWhenPaused,
+                    pausedPresenceGate = pausedPresenceGate,
+                    serviceStopping = discordServiceStopping,
+                    playWhenReady = playWhenReady,
+                    playbackState = playbackState,
+                )
+            val holdContext =
+                DiscordHoldContext(
+                    nowMs = System.currentTimeMillis(),
+                    activeHoldState = activeDiscordHoldState,
+                    lastAppliedVisiblePresence = lastAppliedVisiblePresence,
+                    holdTimeoutMs = DISCORD_HOLD_TIMEOUT_MS,
+                )
+            val semanticState = derivePlaybackSemanticState(inputs)
+            val rawDecision = deriveRawDiscordPresenceDecision(inputs, semanticState)
+            val resolution = resolveDiscordPresenceDecision(rawDecision, holdContext)
+
+            val decision = resolution.decision
+            ensureDiscordSyncFresh(request.epoch)
+
+            val effectiveForce = request.force || refreshWaiters.isNotEmpty()
+            if (!effectiveForce && decision == lastDiscordPresenceDecision) {
+                Timber.tag(DISCORD_SYNC_TAG).v(
+                    "sync epoch=%d reason=%s unchanged decision=%s",
+                    request.epoch,
+                    request.reason,
+                    decision,
+                )
+                completeDiscordRefreshWaiters(refreshWaiters, true)
+                return
+            }
+
             Timber.tag(DISCORD_SYNC_TAG).d(
-                "sync epoch=%d reason=%s reset paused gate because playback intent resumed",
+                "sync epoch=%d reason=%s force=%s effectiveForce=%s songId=%s playWhenReady=%s playbackState=%d isPlaying=%s semantic=%s raw=%s decision=%s holdState=%s lastAppliedVisible=%s refreshWaiters=%d",
                 request.epoch,
                 request.reason,
-            )
-        }
-
-        val inputs =
-            DiscordPresenceInputs(
-                enabled = enabled,
-                hasToken = hasToken,
-                song = song,
-                isPlaying = isPlaying,
-                showWhenPaused = showWhenPaused,
-                pausedPresenceGate = pausedPresenceGate,
-                serviceStopping = discordServiceStopping,
-                playWhenReady = playWhenReady,
-                playbackState = playbackState,
-            )
-        val holdContext =
-            DiscordHoldContext(
-                nowMs = System.currentTimeMillis(),
-                activeHoldState = activeDiscordHoldState,
-                lastAppliedVisiblePresence = lastAppliedVisiblePresence,
-                holdTimeoutMs = DISCORD_HOLD_TIMEOUT_MS,
-            )
-        val semanticState = derivePlaybackSemanticState(inputs)
-        val rawDecision = deriveRawDiscordPresenceDecision(inputs, semanticState)
-        val resolution = resolveDiscordPresenceDecision(rawDecision, holdContext)
-
-        val decision = resolution.decision
-        ensureDiscordSyncFresh(request.epoch)
-
-        if (!request.force && decision == lastDiscordPresenceDecision) {
-            Timber.tag(DISCORD_SYNC_TAG).v(
-                "sync epoch=%d reason=%s unchanged decision=%s",
-                request.epoch,
-                request.reason,
+                request.force,
+                effectiveForce,
+                song?.song?.id,
+                playWhenReady,
+                playbackState,
+                isPlaying,
+                semanticState,
+                rawDecision,
                 decision,
-            )
-            return
-        }
-
-        Timber.tag(DISCORD_SYNC_TAG).d(
-            "sync epoch=%d reason=%s force=%s songId=%s playWhenReady=%s playbackState=%d isPlaying=%s semantic=%s raw=%s decision=%s holdState=%s lastAppliedVisible=%s",
-            request.epoch,
-            request.reason,
-            request.force,
-            song?.song?.id,
-            playWhenReady,
-            playbackState,
-            isPlaying,
-            semanticState,
-            rawDecision,
-            decision,
-            resolution.nextHoldState,
-            lastAppliedVisiblePresence,
-        )
-
-        val applied =
-            applyDiscordPresenceDecision(
-                request = request,
-                resolution = resolution,
-                token = token,
-                song = song,
-                isPlaying = isPlaying,
+                resolution.nextHoldState,
+                lastAppliedVisiblePresence,
+                refreshWaiters.size,
             )
 
-        if (applied) {
-            lastDiscordPresenceDecision = decision
+            val applied =
+                applyDiscordPresenceDecision(
+                    request = request,
+                    resolution = resolution,
+                    token = token,
+                    song = song,
+                    isPlaying = isPlaying,
+                )
+
+            if (applied) {
+                lastDiscordPresenceDecision = decision
+            }
+            completeDiscordRefreshWaiters(refreshWaiters, applied)
+        } catch (_: StaleDiscordSyncException) {
+            requeueDiscordRefreshWaiters(refreshWaiters)
+            Timber.tag(DISCORD_SYNC_TAG).d(
+                "stale sync aborted epoch=%d reason=%s and refresh waiters requeued=%d",
+                request.epoch,
+                request.reason,
+                refreshWaiters.size,
+            )
+        } catch (error: CancellationException) {
+            completeDiscordRefreshWaiters(refreshWaiters, false)
+            throw error
+        } catch (error: Exception) {
+            completeDiscordRefreshWaiters(refreshWaiters, false)
+            throw error
         }
     }
 
