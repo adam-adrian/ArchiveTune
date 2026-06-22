@@ -397,6 +397,15 @@ class MusicService :
 
     @Volatile
     private var lastDiscordPresenceDecision: DiscordPresenceDecision? = null
+
+    @Volatile
+    private var activeDiscordHoldState: ActiveHoldState? = null
+
+    private var activeDiscordHoldTimeoutJob: Job? = null
+
+    @Volatile
+    private var lastAppliedVisiblePresence: LastAppliedVisiblePresence? = null
+
     private val discordSyncEpoch = AtomicLong(0L)
     private val discordSyncRequests = Channel<DiscordSyncRequest>(Channel.CONFLATED)
     private var discordSyncWorkerJob: Job? = null
@@ -1273,6 +1282,46 @@ class MusicService :
                 request.reason,
             )
         }
+    }
+
+    private fun updateActiveDiscordHoldState(nextHoldState: ActiveHoldState?) {
+        val previousHoldState = activeDiscordHoldState
+        activeDiscordHoldState = nextHoldState
+        reconcileDiscordHoldTimeoutJob(previousHoldState, nextHoldState)
+    }
+
+    private fun reconcileDiscordHoldTimeoutJob(
+        previousHoldState: ActiveHoldState?,
+        nextHoldState: ActiveHoldState?,
+    ) {
+        if (previousHoldState === nextHoldState) return
+
+        activeDiscordHoldTimeoutJob?.cancel()
+        activeDiscordHoldTimeoutJob = null
+
+        if (nextHoldState == null) return
+
+        activeDiscordHoldTimeoutJob =
+            scope.launch {
+                delay(DISCORD_HOLD_TIMEOUT_MS)
+                requestDiscordSync(
+                    reason = "hold_timeout_check",
+                    force = true,
+                )
+            }
+    }
+
+    private fun clearDiscordHoldState() {
+        updateActiveDiscordHoldState(null)
+    }
+
+    private fun markLastAppliedVisiblePresence(visibleDecision: DiscordPresenceDecision.Visible) {
+        lastAppliedVisiblePresence =
+            LastAppliedVisiblePresence(
+                songId = visibleDecision.songId,
+                mode = visibleDecision.mode,
+                appliedAtMs = System.currentTimeMillis(),
+            )
     }
 
     private fun ensureDiscordSyncFresh(epoch: Long) {
@@ -7110,6 +7159,7 @@ class MusicService :
 
         private const val TAG = "MusicService"
         private const val DISCORD_SYNC_TAG = "DiscordSync"
+        private const val DISCORD_HOLD_TIMEOUT_MS = 7_000L
         const val CHANNEL_ID = "music_channel_01"
         const val ACTION_MEDIA_NOTIFICATION_DISMISSED =
             "moe.rukamori.archivetune.action.MEDIA_NOTIFICATION_DISMISSED"
