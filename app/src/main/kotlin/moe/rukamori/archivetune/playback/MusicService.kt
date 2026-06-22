@@ -7142,11 +7142,16 @@ class MusicService :
                 intent.getParcelableExtra(EXTRA_MEDIA_NOTIFICATION_DELETE_INTENT)
             }
 
-        if (!player.isPlaying) {
+        val isForeground = isAppInForeground()
+        if (!player.isPlaying && !isForeground) {
             pausedPresenceGate = PausedPresenceGate.HiddenByNotificationDismiss
             requestDiscordSync(
-                reason = "notification_dismissed_while_paused",
+                reason = "notification_dismissed_while_paused_background",
                 force = true,
+            )
+        } else if (!player.isPlaying) {
+            Timber.tag(DISCORD_SYNC_TAG).d(
+                "notification dismissed while paused but app is foreground; keeping paused RPC visible",
             )
         }
 
