@@ -18,6 +18,7 @@ import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaNotification
 import androidx.media3.session.MediaSession
 import com.google.common.collect.ImmutableList
+import moe.rukamori.archivetune.R
 
 @UnstableApi
 class ArchiveTuneMediaNotificationProvider(
@@ -25,7 +26,12 @@ class ArchiveTuneMediaNotificationProvider(
     @DrawableRes smallIconResId: Int,
 ) : MediaNotification.Provider {
     private val delegate =
-        DefaultMediaNotificationProvider(context).apply {
+        DefaultMediaNotificationProvider(
+            context,
+            { MusicService.NOTIFICATION_ID },
+            MusicService.CHANNEL_ID,
+            R.string.music_player,
+        ).apply {
             setSmallIcon(smallIconResId)
         }
 
