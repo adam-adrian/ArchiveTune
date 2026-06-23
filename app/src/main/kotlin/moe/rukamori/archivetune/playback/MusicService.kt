@@ -1840,6 +1840,10 @@ class MusicService :
                 )
                 Timber.tag("MusicService").d("Presence manager started with token=$key")
                 lastPresenceToken = key
+                requestDiscordSync(
+                    reason = "presence_manager_started",
+                    force = true,
+                )
             } catch (ex: Exception) {
                 Timber.tag("MusicService").e(ex, "Failed to start presence manager")
             }

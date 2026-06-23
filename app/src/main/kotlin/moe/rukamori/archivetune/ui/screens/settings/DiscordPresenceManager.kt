@@ -305,7 +305,7 @@ object DiscordPresenceManager {
             ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver!!)
         }
 
-        requestProviderUpdate()
+        Timber.tag(LOG_TAG).d("started manager runtime; awaiting external sync trigger")
     }
 
     fun restart(): Boolean {
