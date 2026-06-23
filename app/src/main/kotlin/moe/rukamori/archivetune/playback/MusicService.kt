@@ -1297,6 +1297,13 @@ class MusicService :
         }
     }
 
+    fun forceDiscordSync(reason: String) {
+        requestDiscordSync(
+            reason = reason,
+            force = true,
+        )
+    }
+
     private fun updateActiveDiscordHoldState(nextHoldState: ActiveHoldState?) {
         val previousHoldState = activeDiscordHoldState
         activeDiscordHoldState = nextHoldState
