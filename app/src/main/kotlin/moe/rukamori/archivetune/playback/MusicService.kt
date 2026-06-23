@@ -1411,7 +1411,7 @@ class MusicService :
             force = true,
         )
         return try {
-            withTimeout(10_000L) { waiter.await() }
+            withTimeout(15_000L) { waiter.await() }
         } catch (error: CancellationException) {
             false
         } catch (_: Exception) {
@@ -1521,7 +1521,15 @@ class MusicService :
             if (applied) {
                 lastDiscordPresenceDecision = decision
             }
-            completeDiscordRefreshWaiters(refreshWaiters, applied)
+            if (decision is DiscordPresenceDecision.Hold) {
+                requeueDiscordRefreshWaiters(refreshWaiters)
+                Timber.tag(DISCORD_SYNC_TAG).d(
+                    "refresh waiters requeued because decision is Hold count=%d",
+                    refreshWaiters.size,
+                )
+            } else {
+                completeDiscordRefreshWaiters(refreshWaiters, applied)
+            }
         } catch (_: StaleDiscordSyncException) {
             requeueDiscordRefreshWaiters(refreshWaiters)
             Timber.tag(DISCORD_SYNC_TAG).d(
