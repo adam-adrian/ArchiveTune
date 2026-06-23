@@ -1586,6 +1586,19 @@ class MusicService :
                     HiddenReason.NoToken,
                     HiddenReason.ServiceStopping,
                     -> {
+                        val clearToken = token.takeIf { it.isNotBlank() } ?: lastPresenceToken
+                        ensureDiscordSyncFresh(request.epoch)
+                        val cleared =
+                            DiscordPresenceManager.clearNow(
+                                context = this@MusicService,
+                                token = clearToken,
+                            )
+                        if (!cleared) {
+                            Timber.tag(DISCORD_SYNC_TAG).d(
+                                "terminal clear skipped or failed for hidden reason=%s",
+                                decision.reason,
+                            )
+                        }
                         ensureDiscordSyncFresh(request.epoch)
                         DiscordPresenceManager.stop()
                         lastPresenceToken = null
