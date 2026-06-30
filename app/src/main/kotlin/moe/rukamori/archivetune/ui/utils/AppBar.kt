@@ -27,6 +27,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 fun appBarScrollBehavior(
     state: TopAppBarState = rememberTopAppBarState(),
     canScroll: () -> Boolean = { true },
+    isNavigating: () -> Boolean = { false },
     snapAnimationSpec: AnimationSpec<Float>? = spring(stiffness = Spring.StiffnessMediumLow),
     flingAnimationSpec: DecayAnimationSpec<Float>? = rememberSplineBasedDecay(),
 ): TopAppBarScrollBehavior =
@@ -35,6 +36,7 @@ fun appBarScrollBehavior(
         snapAnimationSpec = snapAnimationSpec,
         flingAnimationSpec = flingAnimationSpec,
         canScroll = canScroll,
+        isNavigating = isNavigating,
     )
 
 @ExperimentalMaterial3Api
@@ -43,6 +45,7 @@ class AppBarScrollBehavior(
     override val snapAnimationSpec: AnimationSpec<Float>?,
     override val flingAnimationSpec: DecayAnimationSpec<Float>?,
     val canScroll: () -> Boolean = { true },
+    val isNavigating: () -> Boolean = { false },
 ) : TopAppBarScrollBehavior {
     // The bar physically translates (quick-return), so it is not pinned.
     override val isPinned: Boolean = false
@@ -54,6 +57,14 @@ class AppBarScrollBehavior(
                 source: NestedScrollSource,
             ): Offset {
                 if (!canScroll()) return Offset.Zero
+
+                // Ignore inertial fling momentum (NestedScrollSource.SideEffect) while a
+                // navigation transition is in progress. A fling started on the outgoing
+                // screen keeps dispatching deltas after the route flips; without this gate
+                // that leftover momentum leaks into the shared floating-header state and
+                // drags the destination header (carry-over). Direct finger drags
+                // (UserInput) are never gated, so the destination stays responsive.
+                if (source == NestedScrollSource.SideEffect && isNavigating()) return Offset.Zero
 
                 // The limit must be a negative value (set from the rendered header
                 // height via onSizeChanged) before the bar is allowed to move.

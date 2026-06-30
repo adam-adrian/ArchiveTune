@@ -1138,6 +1138,11 @@ class MainActivity : ComponentActivity() {
                                 ).add(WindowInsets(top = AppBarHeight, bottom = bottom))
                         }
 
+                    // True for a short settle window after a route change, so the floating
+                    // header behaviors can ignore leftover fling momentum from the outgoing
+                    // screen (see appBarScrollBehavior). Cleared after the window below.
+                    var isNavigatingTransition by remember { mutableStateOf(false) }
+
                     val searchBarScrollBehavior =
                         appBarScrollBehavior(
                             canScroll = {
@@ -1145,6 +1150,7 @@ class MainActivity : ComponentActivity() {
                                     navBackStackEntry?.destination?.route != Screens.Library.route &&
                                     (playerBottomSheetState.isCollapsed || playerBottomSheetState.isDismissed)
                             },
+                            isNavigating = { isNavigatingTransition },
                         )
                     val topAppBarScrollBehavior =
                         appBarScrollBehavior(
@@ -1153,6 +1159,7 @@ class MainActivity : ComponentActivity() {
                                     navBackStackEntry?.destination?.route != Screens.Library.route &&
                                     (playerBottomSheetState.isCollapsed || playerBottomSheetState.isDismissed)
                             },
+                            isNavigating = { isNavigatingTransition },
                         )
 
                     val handlePrimaryNavigationClick: (Screens, Boolean) -> Unit = { screen, isSelected ->
@@ -1173,6 +1180,17 @@ class MainActivity : ComponentActivity() {
                     }
 
                     var previousRoute by rememberSaveable { mutableStateOf<String?>(null) }
+
+                    // Mark a short settle window after each route change. Re-keying on
+                    // navBackStackEntry cancels/restarts this on every navigation, so rapid
+                    // switches don't clear the flag early. The window covers the NavHost
+                    // transition (tween ~250ms) plus a small tail for the fling to decay;
+                    // it collapses to 0 when animations are disabled.
+                    LaunchedEffect(navBackStackEntry) {
+                        isNavigatingTransition = true
+                        delay(if (disableAnimations) 0L else 300L)
+                        isNavigatingTransition = false
+                    }
 
                     LaunchedEffect(navBackStackEntry) {
                         val currentRoute = navBackStackEntry?.destination?.route
