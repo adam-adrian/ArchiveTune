@@ -1557,6 +1557,32 @@ class MainActivity : ComponentActivity() {
                                         val currentScrollBehavior = if (shouldUseFloatingTopBar) searchBarScrollBehavior else topAppBarScrollBehavior
                                         val isLibraryRoute = navBackStackEntry?.destination?.route == Screens.Library.route
 
+                                        Box(modifier = Modifier.fillMaxWidth()) {
+                                        // Fixed status-bar scrim: stays anchored to the top so the
+                                        // system icons remain legible over content even after the
+                                        // floating header has slid off-screen. Unlike the gradient
+                                        // inside the translating Box below, this layer never moves.
+                                        if (shouldShowBlurBackground && !isLibraryRoute) {
+                                            Box(
+                                                modifier =
+                                                    Modifier
+                                                        .fillMaxWidth()
+                                                        .height(
+                                                            with(LocalDensity.current) {
+                                                                WindowInsets.systemBars.getTop(LocalDensity.current).toDp()
+                                                            },
+                                                        ).background(
+                                                            Brush.verticalGradient(
+                                                                colors =
+                                                                    listOf(
+                                                                        surfaceColor.copy(alpha = 0.95f),
+                                                                        Color.Transparent,
+                                                                    ),
+                                                            ),
+                                                        ),
+                                            )
+                                        }
+
                                         Box(
                                             modifier =
                                                 Modifier
@@ -1745,6 +1771,7 @@ class MainActivity : ComponentActivity() {
                                                         navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     ),
                                             )
+                                        }
                                         }
                                     }
                                     AnimatedVisibility(
