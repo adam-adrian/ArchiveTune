@@ -1186,8 +1186,14 @@ class MainActivity : ComponentActivity() {
                                 currentRoute == Screens.Library.route
 
                         if (wasOnScrollResetSourceRoute && isReturningToHomeOrLibrary) {
-                            searchBarScrollBehavior.state.resetHeightOffset()
-                            topAppBarScrollBehavior.state.resetHeightOffset()
+                            // Launch from the stable scope so a quick navBackStackEntry change
+                            // doesn't cancel this LaunchedEffect mid-animation and snap the header.
+                            coroutineScope.launch {
+                                searchBarScrollBehavior.state.resetHeightOffset()
+                            }
+                            coroutineScope.launch {
+                                topAppBarScrollBehavior.state.resetHeightOffset()
+                            }
                         }
 
                         val isEnteringSubScreen =
@@ -1228,15 +1234,23 @@ class MainActivity : ComponentActivity() {
                         ) {
                             onQueryChange(TextFieldValue())
                             if (navBackStackEntry?.destination?.route != Screens.Home.route) {
-                                searchBarScrollBehavior.state.resetHeightOffset()
-                                topAppBarScrollBehavior.state.resetHeightOffset()
+                                coroutineScope.launch {
+                                    searchBarScrollBehavior.state.resetHeightOffset()
+                                }
+                                coroutineScope.launch {
+                                    topAppBarScrollBehavior.state.resetHeightOffset()
+                                }
                             }
                         }
                     }
                     LaunchedEffect(active) {
                         if (active) {
-                            searchBarScrollBehavior.state.resetHeightOffset()
-                            topAppBarScrollBehavior.state.resetHeightOffset()
+                            coroutineScope.launch {
+                                searchBarScrollBehavior.state.resetHeightOffset()
+                            }
+                            coroutineScope.launch {
+                                topAppBarScrollBehavior.state.resetHeightOffset()
+                            }
                             searchBarFocusRequester.requestFocus()
                         }
                     }
@@ -1556,33 +1570,9 @@ class MainActivity : ComponentActivity() {
                                         val surfaceColor = MaterialTheme.colorScheme.surface
                                         val currentScrollBehavior = if (shouldUseFloatingTopBar) searchBarScrollBehavior else topAppBarScrollBehavior
                                         val isLibraryRoute = navBackStackEntry?.destination?.route == Screens.Library.route
+                                        val appBarHeightPx = with(LocalDensity.current) { AppBarHeight.toPx() }
 
                                         Box(modifier = Modifier.fillMaxWidth()) {
-                                        // Fixed status-bar scrim: stays anchored to the top so the
-                                        // system icons remain legible over content even after the
-                                        // floating header has slid off-screen. Unlike the gradient
-                                        // inside the translating Box below, this layer never moves.
-                                        if (shouldShowBlurBackground && !isLibraryRoute) {
-                                            Box(
-                                                modifier =
-                                                    Modifier
-                                                        .fillMaxWidth()
-                                                        .height(
-                                                            with(LocalDensity.current) {
-                                                                WindowInsets.systemBars.getTop(LocalDensity.current).toDp()
-                                                            },
-                                                        ).background(
-                                                            Brush.verticalGradient(
-                                                                colors =
-                                                                    listOf(
-                                                                        surfaceColor.copy(alpha = 0.95f),
-                                                                        Color.Transparent,
-                                                                    ),
-                                                            ),
-                                                        ),
-                                            )
-                                        }
-
                                         Box(
                                             modifier =
                                                 Modifier
@@ -1595,8 +1585,14 @@ class MainActivity : ComponentActivity() {
                                                             val state = currentScrollBehavior.state
                                                             if (state.heightOffsetLimit != limit) {
                                                                 state.heightOffsetLimit = limit
-                                                                state.heightOffset =
-                                                                    state.heightOffset.coerceIn(limit, 0f)
+                                                                // Only correct heightOffset when it is genuinely
+                                                                // out of the new range. An unconditional coerceIn
+                                                                // on every layout pass would stomp an in-flight
+                                                                // resetHeightOffset() animation (which drives
+                                                                // heightOffset toward 0f frame by frame).
+                                                                if (state.heightOffset < limit) {
+                                                                    state.heightOffset = limit
+                                                                }
                                                             }
                                                         }
                                                     }.offset {
@@ -1606,12 +1602,24 @@ class MainActivity : ComponentActivity() {
                                                         )
                                                     },
                                         ) {
-                                            // Gradient shadow background
-                                            if (shouldShowBlurBackground) {
+                                            // Gradient shadow background. This sits inside the
+                                            // translating Box (which moves by the full heightOffset so
+                                            // the TopAppBar fully hides), but a counter-offset clamps
+                                            // the gradient so it stops once its top reaches the status
+                                            // bar. The remaining status-bar-height band acts as the
+                                            // legibility scrim once the header is hidden, replacing the
+                                            // previously-separate fixed scrim (no more double gradient).
+                                            if (shouldShowBlurBackground && !isLibraryRoute) {
                                                 Box(
                                                     modifier =
                                                         Modifier
-                                                            .fillMaxWidth()
+                                                            .offset {
+                                                                val raw = currentScrollBehavior.state.heightOffset
+                                                                val clamped = raw.coerceAtLeast(-appBarHeightPx)
+                                                                // Counter the parent Box translation so the
+                                                                // gradient's net offset is the clamped value.
+                                                                IntOffset(x = 0, y = (clamped - raw).roundToInt())
+                                                            }.fillMaxWidth()
                                                             .height(
                                                                 AppBarHeight +
                                                                     with(LocalDensity.current) {
