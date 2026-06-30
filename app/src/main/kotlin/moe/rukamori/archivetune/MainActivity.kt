@@ -1233,13 +1233,17 @@ class MainActivity : ComponentActivity() {
                             navBackStackEntry?.destination?.route in topLevelScreens
                         ) {
                             onQueryChange(TextFieldValue())
-                            if (navBackStackEntry?.destination?.route != Screens.Home.route) {
-                                coroutineScope.launch {
-                                    searchBarScrollBehavior.state.resetHeightOffset()
-                                }
-                                coroutineScope.launch {
-                                    topAppBarScrollBehavior.state.resetHeightOffset()
-                                }
+                            // Reset the floating header whenever we land on any top-level
+                            // route (Home/Search/Library). These routes all render from
+                            // searchBarScrollBehavior, so a hidden header on one tab would
+                            // otherwise carry over to the next (e.g. Search -> Home). Home
+                            // was previously excluded, which is exactly why the carry-over
+                            // happened on top-level <-> top-level switches. Reselecting the
+                            // active tab is handled separately by handlePrimaryNavigationClick
+                            // (a same-route event that does not re-run this effect), so there
+                            // is no double reset.
+                            coroutineScope.launch {
+                                searchBarScrollBehavior.state.resetHeightOffset()
                             }
                         }
                     }
