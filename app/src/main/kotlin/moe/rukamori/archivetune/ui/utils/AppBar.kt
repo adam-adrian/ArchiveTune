@@ -44,7 +44,8 @@ class AppBarScrollBehavior(
     override val flingAnimationSpec: DecayAnimationSpec<Float>?,
     val canScroll: () -> Boolean = { true },
 ) : TopAppBarScrollBehavior {
-    override val isPinned: Boolean = true
+    // The bar physically translates (quick-return), so it is not pinned.
+    override val isPinned: Boolean = false
     override var nestedScrollConnection =
         object : NestedScrollConnection {
             override fun onPostScroll(
@@ -53,15 +54,30 @@ class AppBarScrollBehavior(
                 source: NestedScrollSource,
             ): Offset {
                 if (!canScroll()) return Offset.Zero
-                state.contentOffset += consumed.y
-                if (state.heightOffset == 0f || state.heightOffset == state.heightOffsetLimit) {
-                    if (consumed.y == 0f && available.y > 0f) {
-                        // Reset the total content offset to zero when scrolling all the way down.
-                        // This will eliminate some float precision inaccuracies.
+
+                // The limit must be a negative value (set from the rendered header
+                // height via onSizeChanged) before the bar is allowed to move.
+                // Until then, do nothing to avoid sliding off-screen unbounded
+                // (rememberTopAppBarState defaults heightOffsetLimit to -Float.MAX_VALUE).
+                val limit = state.heightOffsetLimit
+                if (limit >= 0f || limit == -Float.MAX_VALUE) return Offset.Zero
+
+                // consumed.y < 0 -> content scrolled up   -> hide header
+                // consumed.y > 0 -> content scrolled down  -> reveal header
+                // Include available.y so the header still reveals immediately when
+                // the list is already at the top edge (child consumed nothing).
+                val delta = consumed.y + available.y
+                if (delta != 0f) {
+                    state.contentOffset += consumed.y
+                    // Explicit clamp: prevents fling overshoot beyond [limit, 0].
+                    state.heightOffset = (state.heightOffset + delta).coerceIn(limit, 0f)
+                    if (state.heightOffset == 0f) {
+                        // Eliminate float precision drift when fully revealed.
                         state.contentOffset = 0f
                     }
                 }
-                state.heightOffset += consumed.y
+
+                // Never consume: content scrolls normally underneath the floating bar.
                 return Offset.Zero
             }
         }

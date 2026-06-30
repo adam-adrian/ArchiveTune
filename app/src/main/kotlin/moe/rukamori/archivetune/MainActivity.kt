@@ -126,6 +126,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -300,6 +301,7 @@ import moe.rukamori.archivetune.viewmodels.OnlineSearchSort
 import moe.rukamori.archivetune.viewmodels.OnlineSearchViewModel
 import java.util.Locale
 import javax.inject.Inject
+import kotlin.math.roundToInt
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.days
 
@@ -1557,12 +1559,26 @@ class MainActivity : ComponentActivity() {
 
                                         Box(
                                             modifier =
-                                                Modifier.offset {
-                                                    IntOffset(
-                                                        x = 0,
-                                                        y = if (isLibraryRoute) 0 else currentScrollBehavior.state.heightOffset.toInt(),
-                                                    )
-                                                },
+                                                Modifier
+                                                    .onSizeChanged { size ->
+                                                        // Floating header slides up by exactly its own rendered
+                                                        // height (app bar + status bar inset). M3 no longer sets
+                                                        // heightOffsetLimit for us because scrollBehavior = null.
+                                                        if (!isLibraryRoute && size.height > 0) {
+                                                            val limit = -size.height.toFloat()
+                                                            val state = currentScrollBehavior.state
+                                                            if (state.heightOffsetLimit != limit) {
+                                                                state.heightOffsetLimit = limit
+                                                                state.heightOffset =
+                                                                    state.heightOffset.coerceIn(limit, 0f)
+                                                            }
+                                                        }
+                                                    }.offset {
+                                                        IntOffset(
+                                                            x = 0,
+                                                            y = if (isLibraryRoute) 0 else currentScrollBehavior.state.heightOffset.roundToInt(),
+                                                        )
+                                                    },
                                         ) {
                                             // Gradient shadow background
                                             if (shouldShowBlurBackground) {
@@ -1693,13 +1709,16 @@ class MainActivity : ComponentActivity() {
                                                         }
                                                     }
                                                 },
+                                                // Floating Home/Search header translates rigidly via the outer
+                                                // Box.offset; passing a scrollBehavior here would make M3 also
+                                                // consume the offset internally (double movement + height
+                                                // collapse). Only non-floating sub-screens use M3's behavior.
                                                 scrollBehavior =
                                                     if (navBackStackEntry?.destination?.route ==
-                                                        Screens.Library.route
+                                                        Screens.Library.route ||
+                                                        shouldUseFloatingTopBar
                                                     ) {
                                                         null
-                                                    } else if (shouldUseFloatingTopBar) {
-                                                        searchBarScrollBehavior
                                                     } else {
                                                         topAppBarScrollBehavior
                                                     },
