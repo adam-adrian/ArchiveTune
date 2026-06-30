@@ -18,6 +18,9 @@ import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.material3.TopAppBarState
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -30,14 +33,22 @@ fun appBarScrollBehavior(
     isNavigating: () -> Boolean = { false },
     snapAnimationSpec: AnimationSpec<Float>? = spring(stiffness = Spring.StiffnessMediumLow),
     flingAnimationSpec: DecayAnimationSpec<Float>? = rememberSplineBasedDecay(),
-): TopAppBarScrollBehavior =
-    AppBarScrollBehavior(
-        state = state,
-        snapAnimationSpec = snapAnimationSpec,
-        flingAnimationSpec = flingAnimationSpec,
-        canScroll = canScroll,
-        isNavigating = isNavigating,
-    )
+): TopAppBarScrollBehavior {
+    // Keep the latest lambdas without making them remember() keys, so the behavior
+    // (and its NestedScrollConnection) is created once and stays stable across
+    // recompositions instead of being reallocated on every recomposition.
+    val currentCanScroll by rememberUpdatedState(canScroll)
+    val currentIsNavigating by rememberUpdatedState(isNavigating)
+    return remember(state, snapAnimationSpec, flingAnimationSpec) {
+        AppBarScrollBehavior(
+            state = state,
+            snapAnimationSpec = snapAnimationSpec,
+            flingAnimationSpec = flingAnimationSpec,
+            canScroll = { currentCanScroll() },
+            isNavigating = { currentIsNavigating() },
+        )
+    }
+}
 
 @ExperimentalMaterial3Api
 class AppBarScrollBehavior(
