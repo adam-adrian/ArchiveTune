@@ -1,6 +1,7 @@
 [submodule "core"]
 	path = core
-	url = https://github.com/ArchiveTuneApp/core.git
+	url = https://github.com/adam-adrian/core.git
+	branch = fix/adaptive-thumbnail-grid-ratio
 [submodule "lyrics"]
 	path = lyrics
 	url = https://github.com/ArchiveTuneApp/lyrics.git
