@@ -13,6 +13,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -31,15 +32,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -63,10 +67,12 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import moe.rukamori.archivetune.LocalAnimationsDisabled
 import moe.rukamori.archivetune.constants.BottomSheetAnimationSpec
 import moe.rukamori.archivetune.constants.BottomSheetSoftAnimationSpec
+import moe.rukamori.archivetune.constants.NavigationBarAnimationSpec
 
 /**
  * Bottom Sheet
@@ -146,9 +152,54 @@ class BottomSheetState(
     private val animatable: Animatable<Dp, AnimationVector1D>,
     private val onAnchorChanged: (Int) -> Unit,
     private val animationsDisabled: Boolean,
-    val collapsedBound: Dp,
+    collapsedBound: Dp,
     initialAnchor: Int = DISMISSED_ANCHOR,
 ) : DraggableState by draggableState {
+    /**
+     * Snapshot-backed collapsed bound so the layout can re-anchor the sheet (navigation bar
+     * show/hide, bottom insets) instead of recreating the state.
+     */
+    private val collapsedBoundState = mutableStateOf(collapsedBound)
+
+    val collapsedBound: Dp
+        get() = collapsedBoundState.value
+
+    /**
+     * Re-anchor the sheet when the layout moves [collapsedBound] (navigation bar show/hide on
+     * route changes): a sheet resting at the collapsed anchor follows the bound by the exact
+     * same delta, so the resting invariant (value == collapsedBound) holds through the
+     * transition and [progress] - and every sheet-driven fade derived from it - stays 0.
+     *
+     * Sheets resting at the dismissed/expanded anchors are absolute positions anchored to the
+     * animatable bounds, which do not move when [collapsedBound] does: they are left untouched
+     * so their position stays pinned. A sheet that is mid-drag or mid-animation is also left
+     * untouched - it settles on its anchor by itself, and the next re-anchor resumes tracking.
+     * This also guarantees re-anchoring never interrupts a sheet animation that is in flight.
+     */
+    internal suspend fun reanchorTo(newCollapsedBound: Dp) {
+        val previous = collapsedBoundState.value
+        if (newCollapsedBound == previous) return
+        val delta = newCollapsedBound - previous
+        val current = animatable.value
+        val target =
+            if (current == previous) {
+                // Resting at the collapsed anchor: ride the bound by the exact delta.
+                (current + delta).coerceIn(
+                    animatable.lowerBound!!,
+                    animatable.upperBound!!,
+                )
+            } else {
+                // Dismissed/expanded rest or in-flight motion: absolute position, don't move.
+                current
+            }
+        if (target != current) {
+            animatable.snapTo(target)
+        }
+        // Commit after snapTo: a cancellation inside snapTo then cannot lose the delta
+        // (the next frame would otherwise compute the delta from the committed bound).
+        collapsedBoundState.value = newCollapsedBound
+    }
+
     val dismissedBound: Dp
         get() = animatable.lowerBound!!
 
@@ -360,35 +411,64 @@ fun rememberBottomSheetState(
             Animatable(0.dp, Dp.VectorConverter)
         }
 
-    return remember(dismissedBound, expandedBound, collapsedBound, coroutineScope, animationsDisabled) {
-        val initialValue =
-            when (previousAnchor) {
-                EXPANDED_ANCHOR -> expandedBound
-                COLLAPSED_ANCHOR -> collapsedBound
-                DISMISSED_ANCHOR -> dismissedBound
-                else -> error("Unknown BottomSheet anchor")
+    // Stable identity: collapsedBound is NOT a creation key anymore. The state survives layout
+    // changes (navigation bar show/hide); only the geometry is re-anchored per frame. Gesture
+    // tracking (pointerInput keyed on the state) and consumer state (e.g. remember(state, ...))
+    // therefore keep their identity across route changes. dismissed/expanded remain creation
+    // keys - they only change with configuration/settings, where a fresh start is correct.
+    val state =
+        remember(dismissedBound, expandedBound, coroutineScope, animationsDisabled) {
+            val initialValue =
+                when (previousAnchor) {
+                    EXPANDED_ANCHOR -> expandedBound
+                    COLLAPSED_ANCHOR -> collapsedBound
+                    DISMISSED_ANCHOR -> dismissedBound
+                    else -> error("Unknown BottomSheet anchor")
+                }
+
+            animatable.updateBounds(dismissedBound.coerceAtMost(expandedBound), expandedBound)
+            coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                animatable.animateTo(initialValue, if (animationsDisabled) snap() else BottomSheetAnimationSpec)
             }
 
-        animatable.updateBounds(dismissedBound.coerceAtMost(expandedBound), expandedBound)
-        coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            animatable.animateTo(initialValue, if (animationsDisabled) snap() else BottomSheetAnimationSpec)
+            BottomSheetState(
+                draggableState =
+                    DraggableState { delta ->
+                        coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                            animatable.snapTo(animatable.value - with(density) { delta.toDp() })
+                        }
+                    },
+                onAnchorChanged = { previousAnchor = it },
+                coroutineScope = coroutineScope,
+                animatable = animatable,
+                animationsDisabled = animationsDisabled,
+                collapsedBound = collapsedBound,
+                initialAnchor = previousAnchor,
+            )
         }
 
-        BottomSheetState(
-            draggableState =
-                DraggableState { delta ->
-                    coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                        animatable.snapTo(animatable.value - with(density) { delta.toDp() })
-                    }
-                },
-            onAnchorChanged = { previousAnchor = it },
-            coroutineScope = coroutineScope,
-            animatable = animatable,
-            animationsDisabled = animationsDisabled,
-            collapsedBound = collapsedBound,
-            initialAnchor = previousAnchor,
+    // The collapsed bound is the layout-driven bound (navigation bar show/hide, bottom insets):
+    // animate it with the same spring as the navigation bar itself, and push every frame of the
+    // animation into the state via reanchorTo. The resting invariant (value == collapsedBound)
+    // then holds by construction, so progress - and every sheet-driven fade derived from it -
+    // stays exactly 0 while the sheet is at rest. animateDpAsState's initialValue defaults to
+    // targetValue: no animation on the first composition, exactly like the previous
+    // remember-keyed behavior. snapshotFlow (keyed once on state, instead of a per-frame
+    // LaunchedEffect) keeps a single collector, so reanchorTo is never cancelled mid-shift.
+    val animationSpec = if (animationsDisabled) snap() else NavigationBarAnimationSpec
+    val animatedCollapsedBound by
+        animateDpAsState(
+            targetValue = collapsedBound,
+            animationSpec = animationSpec,
+            label = "SheetCollapsedBound",
         )
+    LaunchedEffect(state) {
+        snapshotFlow { animatedCollapsedBound }.collect {
+            state.reanchorTo(it)
+        }
     }
+
+    return state
 }
 
 private class BottomSheetGestureRegion(private val view: View) {
