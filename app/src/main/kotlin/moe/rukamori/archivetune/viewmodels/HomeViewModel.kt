@@ -870,7 +870,12 @@ class HomeViewModel
                     val hideVideo = context.dataStore.get(HideVideoKey, false)
                     val blockedArtistIds = database.getBlockedArtistIds().toSet()
                     val aiContentFilterPolicy = loadAiContentFilterPolicy()
-                    val nextSections = YouTube.home(params = chip?.endpoint?.params).getOrNull() ?: return@launch
+                    val nextSections =
+                        YouTube.home(params = chip?.endpoint?.params).getOrElse { throwable ->
+                            if (throwable is CancellationException) throw throwable
+                            reportException(throwable)
+                            return@launch
+                        }
                     val filteredPage =
                         nextSections.copy(
                             chips = homePage.value?.chips,
@@ -888,7 +893,8 @@ class HomeViewModel
                                     )
                                 },
                         )
-                    val (pageWithoutQuickPicks, _) = filteredPage.extractQuickPicks()
+                    val (pageWithoutQuickPicks, selectedQuickPicks) = filteredPage.extractQuickPicks()
+                    remoteQuickPicks.value = selectedQuickPicks?.takeIf { it.items.isNotEmpty() }
                     homePage.value = pageWithoutQuickPicks
                     selectedChip.value = chip
                     updateAllYtItems()
@@ -952,7 +958,6 @@ class HomeViewModel
                     val authState = switchSavedYouTubeAccount(account).getOrThrow()
 
                     if (forceSyncOnSwitch && account.ytmSync && authState.hasLoginCookie) {
-                        syncUtils.clearRemoteLibraryState()
                         syncUtils.performFullSync(authoritative = true)
                     }
                 } catch (e: CancellationException) {
@@ -996,7 +1001,6 @@ class HomeViewModel
                     }
 
                     if (forceSyncOnSwitch && context.dataStore.get(YtmSyncKey, true) && authState.hasLoginCookie) {
-                        syncUtils.clearRemoteLibraryState()
                         syncUtils.performFullSync(authoritative = true)
                     }
                 } catch (e: CancellationException) {
@@ -1047,12 +1051,15 @@ class HomeViewModel
                     .collect { cookie ->
                         try {
                             val isLoggedIn = hasYouTubeLoginCookie(cookie)
-                            val loginTransition = previousLoginState == false && isLoggedIn
+                            val shouldSynchronize =
+                                shouldSynchronizeAuthenticatedSession(
+                                    previousLoginState = previousLoginState,
+                                    isLoggedIn = isLoggedIn,
+                                )
                             previousLoginState = isLoggedIn
 
                             if (isLoggedIn && cookie != null && cookie.isNotEmpty()) {
                                 if (!prepareYouTubeAccount(cookie)) {
-                                    syncUtils.clearRemoteLibraryState()
                                     clearAccountData()
                                     return@collect
                                 }
@@ -1066,7 +1073,7 @@ class HomeViewModel
                                     launch { refreshAccountPlaylistsInternal(refreshGeneration) }
                                 }
 
-                                if (loginTransition) {
+                                if (shouldSynchronize) {
                                     launch {
                                         try {
                                             if (context.dataStore.get(YtmSyncKey, true)) {
@@ -1079,7 +1086,6 @@ class HomeViewModel
                                     }
                                 }
                             } else {
-                                syncUtils.clearRemoteLibraryState()
                                 clearAccountData()
                             }
                         } catch (e: CancellationException) {
