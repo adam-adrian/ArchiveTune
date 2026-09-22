@@ -183,7 +183,6 @@ import moe.rukamori.archivetune.ui.component.BottomSheetState
 import moe.rukamori.archivetune.ui.component.LocalBottomSheetPageState
 import moe.rukamori.archivetune.ui.component.LocalMenuState
 import moe.rukamori.archivetune.ui.component.rememberBottomSheetState
-import moe.rukamori.archivetune.ui.menu.AddToPlaylistDialog
 import moe.rukamori.archivetune.ui.menu.PlayerMenu
 import moe.rukamori.archivetune.ui.player.immersive.ImmersivePlayerEvent
 import moe.rukamori.archivetune.ui.player.immersive.ImmersivePlayerScreen
@@ -191,7 +190,6 @@ import moe.rukamori.archivetune.ui.screens.LOGIN_ROUTE
 import moe.rukamori.archivetune.ui.screens.buildLoginRoute
 import moe.rukamori.archivetune.ui.screens.settings.DarkMode
 import moe.rukamori.archivetune.ui.theme.PlayerColorExtractor
-import android.widget.Toast
 import com.materialkolor.ktx.toHct
 import com.materialkolor.ktx.toColor
 import moe.rukamori.archivetune.ui.utils.highRes
@@ -717,7 +715,9 @@ fun BottomSheetPlayer(
     )
 
     val TextBackgroundColor =
-        if (playerDesignStyle == PlayerDesignStyle.V9 || playerDesignStyle == PlayerDesignStyle.V10) {
+        if (playerDesignStyle == PlayerDesignStyle.V10) {
+            dynamicV10AccentColor
+        } else if (playerDesignStyle == PlayerDesignStyle.V9) {
             dynamicTextColor
         } else if (playerDesignStyle == PlayerDesignStyle.V7 || playerDesignStyle == PlayerDesignStyle.V8) {
             Color.White
@@ -773,6 +773,8 @@ fun BottomSheetPlayer(
                 Pair(Color.White, Color.Black)
             } else if (playerDesignStyle == PlayerDesignStyle.V9) {
                 Pair(dynamicAccentColor, dynamicIconButtonColor)
+            } else if (playerDesignStyle == PlayerDesignStyle.V10) {
+                Pair(dynamicV10FieldColor, dynamicV10AccentColor)
             } else {
                 Pair(tb, ib)
             }
@@ -868,27 +870,6 @@ fun BottomSheetPlayer(
         }
     }
 
-    var showChoosePlaylistDialog by rememberSaveable {
-        mutableStateOf(false)
-    }
-
-    AddToPlaylistDialog(
-        isVisible = showChoosePlaylistDialog,
-        onGetSong = {
-            mediaMetadata?.let { listOf(it.id) } ?: emptyList()
-        },
-        onDismiss = { showChoosePlaylistDialog = false },
-        onAddComplete = { songCount, playlistNames ->
-            val message =
-                if (songCount == 1 && playlistNames.size == 1) {
-                    context.getString(R.string.added_to_playlist, playlistNames.first())
-                } else {
-                    context.getString(R.string.added_to_n_playlists, playlistNames.size)
-                }
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-            showChoosePlaylistDialog = false
-        },
-    )
 
     LaunchedEffect(mediaMetadata?.id, playbackState, aodModeEnabled) {
         val startTime = SystemClock.elapsedRealtime()
@@ -948,12 +929,14 @@ fun BottomSheetPlayer(
     }
 
     val dynamicQueuePeekHeight =
-        if (playerDesignStyle == PlayerDesignStyle.V5 || playerDesignStyle == PlayerDesignStyle.V10) {
+        if (playerDesignStyle == PlayerDesignStyle.V5) {
             0.dp
         } else if (playerDesignStyle == PlayerDesignStyle.V9) {
             88.dp +
                 (if (showCodecOnPlayer) 24.dp else 0.dp) +
                 (if (sleepTimerEnabled) 42.dp else 0.dp)
+        } else if (playerDesignStyle == PlayerDesignStyle.V10) {
+            if (showCodecOnPlayer) 100.dp else 82.dp
         } else if (playerDesignStyle == PlayerDesignStyle.V7) {
             72.dp
         } else if (showCodecOnPlayer) {
@@ -1498,8 +1481,6 @@ fun BottomSheetPlayer(
                             playbackState = playbackState,
                             isPlaying = isPlaying,
                             isLoading = isLoading,
-                            canSkipPrevious = canSkipPrevious,
-                            canSkipNext = canSkipNext,
                             sliderPosition = sliderPosition,
                             position = position,
                             duration = duration,
@@ -1508,9 +1489,7 @@ fun BottomSheetPlayer(
                             state = state,
                             textBackgroundColor = dynamicV10AccentColor,
                             textButtonColor = dynamicV10FieldColor,
-                            iconButtonColor = iconButtonColor,
                             onCollapseClick = { state.collapseSoft() },
-                            onQueueClick = openQueue,
                             onLyricsClick = { isLyricsScreenVisible = true },
                             onSliderValueChange = onSliderValueChange,
                             onSliderValueChangeFinished = onSliderValueChangeFinished,
@@ -1538,9 +1517,6 @@ fun BottomSheetPlayer(
                                     )
                                 }
                             },
-                            onAddToPlaylistClick = {
-                                showChoosePlaylistDialog = true
-                            },
                             landscape = true,
                             modifier =
                                 Modifier
@@ -1548,7 +1524,7 @@ fun BottomSheetPlayer(
                                     .padding(bottom = queueSheetState.collapsedBound)
                                     .windowInsetsPadding(
                                         WindowInsets.systemBars.only(
-                                            WindowInsetsSides.Top + WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+                                            WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
                                         ),
                                     )
                                     .nestedScroll(state.preUpPostDownNestedScrollConnection),
@@ -1789,8 +1765,6 @@ fun BottomSheetPlayer(
                             playbackState = playbackState,
                             isPlaying = isPlaying,
                             isLoading = isLoading,
-                            canSkipPrevious = canSkipPrevious,
-                            canSkipNext = canSkipNext,
                             sliderPosition = sliderPosition,
                             position = position,
                             duration = duration,
@@ -1799,9 +1773,7 @@ fun BottomSheetPlayer(
                             state = state,
                             textBackgroundColor = dynamicV10AccentColor,
                             textButtonColor = dynamicV10FieldColor,
-                            iconButtonColor = iconButtonColor,
                             onCollapseClick = { state.collapseSoft() },
-                            onQueueClick = openQueue,
                             onLyricsClick = { isLyricsScreenVisible = true },
                             onSliderValueChange = onSliderValueChange,
                             onSliderValueChangeFinished = onSliderValueChangeFinished,
@@ -1828,9 +1800,6 @@ fun BottomSheetPlayer(
                                         onDismiss = menuState::dismiss,
                                     )
                                 }
-                            },
-                            onAddToPlaylistClick = {
-                                showChoosePlaylistDialog = true
                             },
                             landscape = false,
                             modifier =

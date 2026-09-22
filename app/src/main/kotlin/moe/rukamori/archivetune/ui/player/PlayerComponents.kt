@@ -56,7 +56,6 @@ import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.LoadingIndicator
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
@@ -83,11 +82,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.CompositionLocalProvider
 import moe.rukamori.archivetune.ui.component.LocalMenuState
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -115,8 +112,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.animation.core.Animatable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.MaterialShapes
 import kotlin.math.abs
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -4429,8 +4424,6 @@ fun V10PlayerContent(
     playbackState: Int,
     isPlaying: Boolean,
     isLoading: Boolean,
-    canSkipPrevious: Boolean,
-    canSkipNext: Boolean,
     sliderPosition: Long?,
     position: Long,
     duration: Long,
@@ -4439,9 +4432,7 @@ fun V10PlayerContent(
     state: BottomSheetState,
     textBackgroundColor: Color,
     textButtonColor: Color,
-    iconButtonColor: Color,
     onCollapseClick: () -> Unit,
-    onQueueClick: () -> Unit,
     onLyricsClick: () -> Unit,
     onSliderValueChange: (Long) -> Unit,
     onSliderValueChangeFinished: () -> Unit,
@@ -4449,7 +4440,6 @@ fun V10PlayerContent(
     sleepTimerEnabled: Boolean,
     sleepTimerTimeLeft: Long,
     onMenuClick: () -> Unit,
-    onAddToPlaylistClick: () -> Unit,
     modifier: Modifier = Modifier,
     landscape: Boolean = false,
 ) {
@@ -4474,11 +4464,6 @@ fun V10PlayerContent(
         }
     }
 
-    val shuffleModeEnabled by playerConnection.shuffleModeEnabled.collectAsState()
-    val repeatMode by playerConnection.repeatMode.collectAsState()
-    val currentSong by playerConnection.currentSong.collectAsState(initial = null)
-    val liked = currentSong?.song?.liked == true
-    val onToggleLike = playerConnection::toggleLike
 
     // The two-tone contract: field + accent, nothing else.
     // textBackgroundColor = accent (text/icon color), textButtonColor = field (fill color)
@@ -4578,13 +4563,8 @@ fun V10PlayerContent(
                 artworkUrl = artworkUrl,
                 mediaMetadataId = mediaMetadata.id,
                 isPlaying = isPlaying,
-                onTap = onPlayPauseClick,
                 accent = accent,
                 field = field,
-                canSkipPrevious = canSkipPrevious,
-                canSkipNext = canSkipNext,
-                onSkipPrevious = { playerConnection.player.seekToPrevious() },
-                onSkipNext = { playerConnection.player.seekToNext() }
             )
         }
 
@@ -4803,52 +4783,8 @@ fun V10PlayerContent(
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            // ========== TOGGLE ROW (V9 INDIVIDUAL BUTTONS STYLE) ==========
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 20.dp, bottom = 8.dp)
-                    .pointerInput(Unit) {
-                        detectVerticalDragGestures { change, dragAmount ->
-                            if (dragAmount < -15) {
-                                change.consume()
-                                onQueueClick()
-                            }
-                        }
-                    },
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Like Button
-                V10ToggleButton(
-                    checked = liked,
-                    onClick = onToggleLike,
-                    accent = accent,
-                    field = field,
-                    iconResId = if (liked) R.drawable.favorite else R.drawable.favorite_border,
-                    contentDescription = "Like"
-                )
-
-                // Add to Playlist Button
-                V10ToggleButton(
-                    checked = false,
-                    onClick = onAddToPlaylistClick,
-                    accent = accent,
-                    field = field,
-                    iconResId = R.drawable.library_add,
-                    contentDescription = "Add to playlist"
-                )
-            }
         }
 
-        Spacer(
-            modifier = Modifier
-                .navigationBarsPadding()
-                .height(6.dp)
-        )
     }
 }
 
@@ -4860,13 +4796,8 @@ private fun EditorialDieCutArt(
     artworkUrl: String?,
     mediaMetadataId: String,
     isPlaying: Boolean,
-    onTap: () -> Unit,
     accent: Color,
     field: Color,
-    canSkipPrevious: Boolean,
-    canSkipNext: Boolean,
-    onSkipPrevious: () -> Unit,
-    onSkipNext: () -> Unit
 ) {
     val dieCuts = remember {
         listOf(
@@ -4918,14 +4849,6 @@ private fun EditorialDieCutArt(
     ) {
         if (maxWidth < 50.dp || maxHeight < 50.dp) return@BoxWithConstraints
         val artSize = minOf(maxWidth, maxHeight) * 0.95f
-
-        val view = androidx.compose.ui.platform.LocalView.current
-        val (enableHapticFeedback) = rememberPreference(moe.rukamori.archivetune.constants.EnableHapticFeedbackKey, true)
-        val coroutineScope = rememberCoroutineScope()
-
-        // Visual feedback variables
-        var skipIndicator by remember { mutableStateOf<String?>(null) } // "prev", "next", or "play_pause"
-        val skipIndicatorAlpha = remember { Animatable(0f) }
 
         Box(
             modifier = Modifier
@@ -4997,65 +4920,6 @@ internal fun EditorialCircleButton(
     }
 }
 
-@Composable
-internal fun EditorialChip(
-    checked: Boolean,
-    onClick: () -> Unit,
-    accent: Color,
-    field: Color,
-    content: @Composable () -> Unit
-) {
-    val backgroundColor by animateColorAsState(
-        targetValue = if (checked) accent else Color.Transparent,
-        label = "EditorialChipBg"
-    )
-    val contentColor = if (checked) field else accent
-    Box(
-        modifier = Modifier
-            .size(48.dp)
-            .clip(CircleShape)
-            .background(backgroundColor)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        CompositionLocalProvider(LocalContentColor provides contentColor) {
-            content()
-        }
-    }
-}
-
-@Composable
-private fun V10ToggleButton(
-    checked: Boolean,
-    onClick: () -> Unit,
-    accent: Color,
-    field: Color,
-    iconResId: Int,
-    contentDescription: String?,
-) {
-    val containerColor by animateColorAsState(
-        targetValue = if (checked) accent else accent.copy(alpha = 0.08f),
-        label = "V10ToggleButtonBg"
-    )
-    val contentColor = if (checked) field else accent
-
-    Box(
-        modifier = Modifier
-            .size(48.dp)
-            .clip(CircleShape)
-            .background(containerColor)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        CompositionLocalProvider(LocalContentColor provides contentColor) {
-            Icon(
-                painter = painterResource(iconResId),
-                contentDescription = contentDescription,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-    }
-}
 
 internal class EditorialMorphShape(
     private val morph: Morph,
