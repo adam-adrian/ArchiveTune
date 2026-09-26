@@ -65,12 +65,10 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import moe.rukamori.archivetune.LocalAnimationsDisabled
 import moe.rukamori.archivetune.constants.BottomSheetAnimationSpec
 import moe.rukamori.archivetune.constants.BottomSheetSoftAnimationSpec
@@ -162,53 +160,25 @@ class BottomSheetState(
     val collapsedBound: Dp
         get() = collapsedBoundState.value
 
-    internal var targetCollapsedBound: Dp by mutableStateOf(
-        collapsedBound.coerceIn(animatable.lowerBound!!, animatable.upperBound!!)
-    )
-        private set
-
     private var lastAnimationSpec: AnimationSpec<Dp> =
         if (animationsDisabled) snap() else BottomSheetAnimationSpec
 
-    internal fun updateTargetCollapsedBound(newTargetBound: Dp) {
-        val clampedTarget = newTargetBound.coerceIn(animatable.lowerBound!!, animatable.upperBound!!)
-        val previousTarget = targetCollapsedBound
-        targetCollapsedBound = clampedTarget
-        if (previousTarget == clampedTarget) return
-
-        if (targetAnchor == COLLAPSED_ANCHOR) {
-            val isRestingAtOldCollapsed = !animatable.isRunning &&
-                (animatable.value - collapsedBoundState.value).let { if (it < 0.dp) -it else it } < 0.5.dp
-            if (!isRestingAtOldCollapsed) {
-                coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                    animatable.animateTo(clampedTarget, lastAnimationSpec)
-                }
-            }
-        }
-    }
-
-    internal suspend fun reanchorTo(newCollapsedBound: Dp) {
+    // Called every frame while the bound animates, so the sheet follows it instead of racing to the
+    // final bound with a different spring (that race left value > collapsedBound and faded the mini player).
+    internal fun reanchorTo(newCollapsedBound: Dp) {
         val previous = collapsedBoundState.value
         if (newCollapsedBound == previous) return
-        val current = animatable.value
-        val isRestingAtCollapsed = !animatable.isRunning &&
-            (current == previous || (current - previous).let { if (it < 0.dp) -it else it } < 0.5.dp)
-
-        val target =
-            if (isRestingAtCollapsed) {
-                newCollapsedBound.coerceIn(
-                    animatable.lowerBound!!,
-                    animatable.upperBound!!,
-                )
-            } else {
-                current
+        collapsedBoundState.value = newCollapsedBound
+        val target = newCollapsedBound.coerceIn(animatable.lowerBound!!, animatable.upperBound!!)
+        if (animatable.isRunning) {
+            if (targetAnchor != COLLAPSED_ANCHOR) return
+            coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                animatable.animateTo(target, lastAnimationSpec)
             }
-
-        withContext(NonCancellable) {
-            if (target != current) {
+        } else if (abs((animatable.value - previous).value) < 0.5f) {
+            coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
                 animatable.snapTo(target)
             }
-            collapsedBoundState.value = newCollapsedBound
         }
     }
 
@@ -251,7 +221,7 @@ class BottomSheetState(
         updateAnchor(COLLAPSED_ANCHOR)
         lastAnimationSpec = animationSpec
         coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            animatable.animateTo(targetCollapsedBound, animationSpec)
+            animatable.animateTo(collapsedBound, animationSpec)
         }
     }
 
@@ -457,10 +427,6 @@ fun rememberBottomSheetState(
                 initialAnchor = previousAnchor,
             )
         }
-
-    LaunchedEffect(state, collapsedBound) {
-        state.updateTargetCollapsedBound(collapsedBound)
-    }
 
     val animationSpec = if (animationsDisabled) snap() else NavigationBarAnimationSpec
     val animatedCollapsedBound by
