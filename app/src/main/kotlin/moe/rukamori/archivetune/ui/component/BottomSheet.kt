@@ -8,6 +8,7 @@
 package moe.rukamori.archivetune.ui.component
 
 import android.view.View
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
@@ -166,6 +167,7 @@ class BottomSheetState(
     // recreation did. A tolerance-based resting check never re-synced once value drifted, leaving
     // value > collapsedBound and the mini player faded.
     internal fun reanchorTo(newCollapsedBound: Dp) {
+        Log.d("BottomSheetDbg", "reanchor #${System.identityHashCode(this)} ${collapsedBoundState.value}->$newCollapsedBound value=${animatable.value} anchor=$targetAnchor running=${animatable.isRunning}")
         if (newCollapsedBound == collapsedBoundState.value) return
         collapsedBoundState.value = newCollapsedBound
         if (targetAnchor != COLLAPSED_ANCHOR) return
@@ -206,6 +208,7 @@ class BottomSheetState(
     }
 
     private fun updateAnchor(anchor: Int) {
+        Log.d("BottomSheetDbg", "anchor #${System.identityHashCode(this)} $targetAnchor->$anchor value=${animatable.value} bound=$collapsedBound from=${Throwable().stackTrace.drop(1).take(3).joinToString(" < ") { "${it.fileName}:${it.lineNumber}" }}")
         targetAnchor = anchor
         onAnchorChanged(anchor)
     }
@@ -400,6 +403,7 @@ fun rememberBottomSheetState(
                     else -> error("Unknown BottomSheet anchor")
                 }
 
+            Log.d("BottomSheetDbg", "create prevAnchor=$previousAnchor bounds=[$dismissedBound,$collapsedBound,$expandedBound] initial=$initialValue animValue=${animatable.value}")
             animatable.updateBounds(dismissedBound.coerceAtMost(expandedBound), expandedBound)
             coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
                 animatable.animateTo(initialValue, if (animationsDisabled) snap() else BottomSheetAnimationSpec)
@@ -432,6 +436,10 @@ fun rememberBottomSheetState(
         snapshotFlow { animatedCollapsedBound }.collect {
             state.reanchorTo(it)
         }
+    }
+    LaunchedEffect(state) {
+        snapshotFlow { "value=${state.value} bound=${state.collapsedBound} upper=${state.expandedBound} progress=${state.progress} collapsed=${state.isCollapsed} anchor=${state.targetAnchor}" }
+            .collect { Log.d("BottomSheetDbg", "snap #${System.identityHashCode(state)} $it") }
     }
 
     return state
