@@ -65,7 +65,6 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
@@ -163,22 +162,16 @@ class BottomSheetState(
     private var lastAnimationSpec: AnimationSpec<Dp> =
         if (animationsDisabled) snap() else BottomSheetAnimationSpec
 
-    // Called every frame while the bound animates, so the sheet follows it instead of racing to the
-    // final bound with a different spring (that race left value > collapsedBound and faded the mini player).
+    // Keeps "collapsed anchor => value == collapsedBound" on every bound change, like the pre-#1307 state
+    // recreation did. A tolerance-based resting check never re-synced once value drifted, leaving
+    // value > collapsedBound and the mini player faded.
     internal fun reanchorTo(newCollapsedBound: Dp) {
-        val previous = collapsedBoundState.value
-        if (newCollapsedBound == previous) return
+        if (newCollapsedBound == collapsedBoundState.value) return
         collapsedBoundState.value = newCollapsedBound
+        if (targetAnchor != COLLAPSED_ANCHOR) return
         val target = newCollapsedBound.coerceIn(animatable.lowerBound!!, animatable.upperBound!!)
-        if (animatable.isRunning) {
-            if (targetAnchor != COLLAPSED_ANCHOR) return
-            coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                animatable.animateTo(target, lastAnimationSpec)
-            }
-        } else if (abs((animatable.value - previous).value) < 0.5f) {
-            coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                animatable.snapTo(target)
-            }
+        coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            if (animatable.isRunning) animatable.animateTo(target, lastAnimationSpec) else animatable.snapTo(target)
         }
     }
 
