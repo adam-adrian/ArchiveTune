@@ -8,6 +8,7 @@
 package moe.rukamori.archivetune.ui.component
 
 import android.view.View
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
@@ -67,10 +68,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import moe.rukamori.archivetune.LocalAnimationsDisabled
 import moe.rukamori.archivetune.constants.BottomSheetAnimationSpec
 import moe.rukamori.archivetune.constants.BottomSheetSoftAnimationSpec
@@ -162,53 +160,20 @@ class BottomSheetState(
     val collapsedBound: Dp
         get() = collapsedBoundState.value
 
-    internal var targetCollapsedBound: Dp by mutableStateOf(
-        collapsedBound.coerceIn(animatable.lowerBound!!, animatable.upperBound!!)
-    )
-        private set
-
     private var lastAnimationSpec: AnimationSpec<Dp> =
         if (animationsDisabled) snap() else BottomSheetAnimationSpec
 
-    internal fun updateTargetCollapsedBound(newTargetBound: Dp) {
-        val clampedTarget = newTargetBound.coerceIn(animatable.lowerBound!!, animatable.upperBound!!)
-        val previousTarget = targetCollapsedBound
-        targetCollapsedBound = clampedTarget
-        if (previousTarget == clampedTarget) return
-
-        if (targetAnchor == COLLAPSED_ANCHOR) {
-            val isRestingAtOldCollapsed = !animatable.isRunning &&
-                (animatable.value - collapsedBoundState.value).let { if (it < 0.dp) -it else it } < 0.5.dp
-            if (!isRestingAtOldCollapsed) {
-                coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                    animatable.animateTo(clampedTarget, lastAnimationSpec)
-                }
-            }
-        }
-    }
-
-    internal suspend fun reanchorTo(newCollapsedBound: Dp) {
-        val previous = collapsedBoundState.value
-        if (newCollapsedBound == previous) return
-        val current = animatable.value
-        val isRestingAtCollapsed = !animatable.isRunning &&
-            (current == previous || (current - previous).let { if (it < 0.dp) -it else it } < 0.5.dp)
-
-        val target =
-            if (isRestingAtCollapsed) {
-                newCollapsedBound.coerceIn(
-                    animatable.lowerBound!!,
-                    animatable.upperBound!!,
-                )
-            } else {
-                current
-            }
-
-        withContext(NonCancellable) {
-            if (target != current) {
-                animatable.snapTo(target)
-            }
-            collapsedBoundState.value = newCollapsedBound
+    // Keeps "collapsed anchor => value == collapsedBound" on every bound change, like the pre-#1307 state
+    // recreation did. A tolerance-based resting check never re-synced once value drifted, leaving
+    // value > collapsedBound and the mini player faded.
+    internal fun reanchorTo(newCollapsedBound: Dp) {
+        Log.d("BottomSheetDbg", "reanchor #${System.identityHashCode(this)} ${collapsedBoundState.value}->$newCollapsedBound value=${animatable.value} anchor=$targetAnchor running=${animatable.isRunning}")
+        if (newCollapsedBound == collapsedBoundState.value) return
+        collapsedBoundState.value = newCollapsedBound
+        if (targetAnchor != COLLAPSED_ANCHOR) return
+        val target = newCollapsedBound.coerceIn(animatable.lowerBound!!, animatable.upperBound!!)
+        coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            if (animatable.isRunning) animatable.animateTo(target, lastAnimationSpec) else animatable.snapTo(target)
         }
     }
 
@@ -243,6 +208,7 @@ class BottomSheetState(
     }
 
     private fun updateAnchor(anchor: Int) {
+        Log.d("BottomSheetDbg", "anchor #${System.identityHashCode(this)} $targetAnchor->$anchor value=${animatable.value} bound=$collapsedBound from=${Throwable().stackTrace.drop(1).take(3).joinToString(" < ") { "${it.fileName}:${it.lineNumber}" }}")
         targetAnchor = anchor
         onAnchorChanged(anchor)
     }
@@ -251,7 +217,7 @@ class BottomSheetState(
         updateAnchor(COLLAPSED_ANCHOR)
         lastAnimationSpec = animationSpec
         coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            animatable.animateTo(targetCollapsedBound, animationSpec)
+            animatable.animateTo(collapsedBound, animationSpec)
         }
     }
 
@@ -437,6 +403,7 @@ fun rememberBottomSheetState(
                     else -> error("Unknown BottomSheet anchor")
                 }
 
+            Log.d("BottomSheetDbg", "create prevAnchor=$previousAnchor bounds=[$dismissedBound,$collapsedBound,$expandedBound] initial=$initialValue animValue=${animatable.value}")
             animatable.updateBounds(dismissedBound.coerceAtMost(expandedBound), expandedBound)
             coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
                 animatable.animateTo(initialValue, if (animationsDisabled) snap() else BottomSheetAnimationSpec)
@@ -458,10 +425,6 @@ fun rememberBottomSheetState(
             )
         }
 
-    LaunchedEffect(state, collapsedBound) {
-        state.updateTargetCollapsedBound(collapsedBound)
-    }
-
     val animationSpec = if (animationsDisabled) snap() else NavigationBarAnimationSpec
     val animatedCollapsedBound by
         animateDpAsState(
@@ -473,6 +436,10 @@ fun rememberBottomSheetState(
         snapshotFlow { animatedCollapsedBound }.collect {
             state.reanchorTo(it)
         }
+    }
+    LaunchedEffect(state) {
+        snapshotFlow { "value=${state.value} bound=${state.collapsedBound} upper=${state.expandedBound} progress=${state.progress} collapsed=${state.isCollapsed} anchor=${state.targetAnchor}" }
+            .collect { Log.d("BottomSheetDbg", "snap #${System.identityHashCode(state)} $it") }
     }
 
     return state
