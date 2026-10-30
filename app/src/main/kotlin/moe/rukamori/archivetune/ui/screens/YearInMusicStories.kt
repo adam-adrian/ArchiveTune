@@ -32,14 +32,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
@@ -80,6 +81,8 @@ import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
@@ -159,14 +162,15 @@ internal fun RecapStories(
             onSurfaceVariant = Color(RecapAppearance.Secondary), surfaceContainerHigh = Color(RecapAppearance.Surface))
     }
     MaterialTheme(colorScheme = colors) {
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(
+            Color(RecapAppearance.Cream), Color(RecapAppearance.Mint),
+        ))).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+            .clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))) {
             RecapStoryBackground(chapter, Modifier.matchParentSize())
             Column(Modifier.align(Alignment.Center).widthIn(max = 1000.dp).fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 20.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(painterResource(R.drawable.small_icon), null, Modifier.size(20.dp), tint = foreground)
-                    Text(stringResource(R.string.app_name), Modifier.weight(1f).padding(start = 8.dp),
-                        style = MaterialTheme.typography.labelLarge, color = foreground)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End) {
                     if (!touchExploration && chapter != RecapChapter.END) {
                         RecapIcon(if (paused) R.drawable.play else R.drawable.pause,
                             if (paused) R.string.recap_resume_highlights else R.string.recap_pause_highlights, { paused = !paused })
@@ -178,24 +182,32 @@ internal fun RecapStories(
                     }
                 }
                 val progressDescription = stringResource(R.string.recap_progress, index + 1, data.chapters.size)
-                Canvas(Modifier.fillMaxWidth().height(3.dp).semantics { contentDescription = progressDescription }) {
-                    val gap = 4.dp.toPx()
-                    val segmentWidth = ((size.width - gap * (data.chapters.size - 1)) / data.chapters.size).coerceAtLeast(0f)
-                    data.chapters.indices.forEach { segment ->
-                        val left = (if (rtl) data.chapters.lastIndex - segment else segment) * (segmentWidth + gap)
-                        drawRect(foreground.copy(alpha = 0.28f), Offset(left, 0f), androidx.compose.ui.geometry.Size(segmentWidth, size.height))
-                        val fill = when {
-                            segment < index -> 1f
-                            segment == index && duration > 0 -> elapsed.toFloat() / duration
-                            segment == index -> 1f
-                            else -> 0f
+                if (chapter != RecapChapter.END) {
+                    Canvas(Modifier.fillMaxWidth().padding(horizontal = 20.dp).height(2.dp).semantics { contentDescription = progressDescription }) {
+                        val gap = 4.dp.toPx()
+                        val segmentWidth = ((size.width - gap * (data.chapters.size - 1)) / data.chapters.size).coerceAtLeast(0f)
+                        data.chapters.indices.forEach { segment ->
+                            val left = (if (rtl) data.chapters.lastIndex - segment else segment) * (segmentWidth + gap)
+                            drawRect(foreground.copy(alpha = 0.28f), Offset(left, 0f), androidx.compose.ui.geometry.Size(segmentWidth, size.height))
+                            val fill = when {
+                                segment < index -> 1f
+                                segment == index && duration > 0 -> elapsed.toFloat() / duration
+                                segment == index -> 1f
+                                else -> 0f
+                            }
+                            drawRect(foreground, Offset(left + if (rtl) segmentWidth * (1 - fill) else 0f, 0f),
+                                androidx.compose.ui.geometry.Size(segmentWidth * fill, size.height))
                         }
-                        drawRect(foreground, Offset(left + if (rtl) segmentWidth * (1 - fill) else 0f, 0f),
-                            androidx.compose.ui.geometry.Size(segmentWidth * fill, size.height))
+                    }
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(data.year.toString(), style = MaterialTheme.typography.labelLarge, color = foreground)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(painterResource(R.drawable.small_icon), null, Modifier.size(16.dp), tint = foreground)
+                            Text(stringResource(R.string.app_name), style = MaterialTheme.typography.labelLarge, color = foreground)
+                        }
                     }
                 }
-                Text(text.period(data), Modifier.padding(top = 12.dp, bottom = 8.dp),
-                    style = MaterialTheme.typography.labelMedium, color = foreground)
                 val previousLabel = stringResource(R.string.recap_previous)
                 val nextLabel = stringResource(R.string.recap_next)
                 Box(Modifier.weight(1f).fillMaxWidth().clipToBounds().semantics {
@@ -259,27 +271,28 @@ internal fun RecapStories(
                 val soundtrackError = selection.soundtrackFailed || selection.playback.failed ||
                     (!selection.soundtrackStarting && !selection.playback.recapQueue)
                 if (soundtrackError) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(stringResource(R.string.recap_soundtrack_error), Modifier.weight(1f), style = MaterialTheme.typography.labelSmall)
                         TextButton(callbacks.retrySoundtrack) { Text(stringResource(R.string.recap_retry_soundtrack)) }
                     }
                 } else if (selection.soundtrackStarting || selection.playback.buffering) {
-                    Text(stringResource(R.string.recap_soundtrack_loading), Modifier.padding(vertical = 8.dp),
+                    Text(stringResource(R.string.recap_soundtrack_loading), Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                         style = MaterialTheme.typography.labelSmall)
                 }
-                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RecapIcon(if (selection.playback.muted) R.drawable.volume_off else R.drawable.volume_up,
-                        if (selection.playback.muted) R.string.recap_unmute else R.string.recap_mute,
-                        callbacks.mute, selection.playback.recapQueue)
-                    RecapIcon(if (rtl) R.drawable.arrow_forward else R.drawable.arrow_back,
-                        R.string.recap_previous, { move.value(-1) }, index > 0)
-                    Text("${text.number(index.toLong() + 1)} / ${text.number(data.chapters.size.toLong())}",
-                        Modifier.weight(1f).clearAndSetSemantics { }, textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.labelSmall)
-                    RecapIcon(if (rtl) R.drawable.arrow_back else R.drawable.arrow_forward,
-                        R.string.recap_next, { move.value(1) }, index < data.chapters.lastIndex)
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    StoryCornerAction(if (selection.playback.muted) R.drawable.volume_off else R.drawable.volume_up,
+                        if (selection.playback.muted) R.string.recap_unmute else R.string.recap_mute, callbacks.mute,
+                        enabled = selection.playback.recapQueue)
+                    Spacer(Modifier.weight(1f))
+                    if (touchExploration) {
+                        RecapIcon(if (rtl) R.drawable.arrow_forward else R.drawable.arrow_back,
+                            R.string.recap_previous, { move.value(-1) }, index > 0)
+                        RecapIcon(if (rtl) R.drawable.arrow_back else R.drawable.arrow_forward,
+                            R.string.recap_next, { move.value(1) }, index < data.chapters.lastIndex)
+                        Spacer(Modifier.weight(1f))
+                    }
                     if (chapter != RecapChapter.INTRO && chapter != RecapChapter.END) {
-                        if (selection.sharing) ShareProgress() else RecapIcon(R.drawable.share, R.string.share, callbacks.share)
+                        if (selection.sharing) ShareProgress() else StoryCornerAction(R.drawable.share, R.string.share, callbacks.share)
                     } else Spacer(Modifier.size(48.dp))
                 }
             }
@@ -288,11 +301,20 @@ internal fun RecapStories(
 }
 
 @Composable
+private fun StoryCornerAction(icon: Int, label: Int, onClick: () -> Unit, enabled: Boolean = true) {
+    FilledTonalIconButton(onClick = onClick, enabled = enabled,
+        colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color.Black.copy(alpha = 0.3f),
+            contentColor = Color.White)) {
+        Icon(painterResource(icon), stringResource(label), Modifier.size(20.dp))
+    }
+}
+
+@Composable
 private fun RecapStoryBackground(chapter: RecapChapter, modifier: Modifier = Modifier) {
     val colors = when (chapter) {
         RecapChapter.INTRO -> listOf(Color(RecapAppearance.Cream), Color(RecapAppearance.Mint))
-        RecapChapter.TIME, RecapChapter.HABITS -> listOf(Color(RecapAppearance.Surface), Color(RecapAppearance.Background))
-        else -> listOf(Color(RecapAppearance.Blue), Color(RecapAppearance.Background))
+        RecapChapter.TIME, RecapChapter.HABITS -> listOf(Color(0xFF54B9D2), Color(0xFF39899E), Color(0xFF182D2B))
+        else -> listOf(Color(0xFF2851A0), Color(0xFF397CE4), Color(0xFF17292F))
     }
     Canvas(modifier.background(Brush.verticalGradient(colors))) {
         drawCircle(Brush.radialGradient(listOf(Color(RecapAppearance.Mint).copy(alpha = 0.35f), Color.Transparent),
@@ -301,7 +323,7 @@ private fun RecapStoryBackground(chapter: RecapChapter, modifier: Modifier = Mod
         drawCircle(Brush.radialGradient(listOf(Color(RecapAppearance.Cream).copy(alpha = 0.25f), Color.Transparent),
             center = Offset(0f, size.height * 0.25f), radius = size.maxDimension * 0.5f),
             radius = size.maxDimension * 0.5f, center = Offset(0f, size.height * 0.25f))
-        if (chapter != RecapChapter.INTRO) drawRect(Color.Black.copy(alpha = 0.25f))
+        if (chapter == RecapChapter.END) drawRect(Color.Black.copy(alpha = 0.2f))
     }
 }
 
@@ -317,17 +339,58 @@ private fun RecapScene(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val landscape = maxWidth > maxHeight && maxWidth >= 600.dp
         val hasArt = chapter !in listOf(RecapChapter.INTRO, RecapChapter.END, RecapChapter.MONTHS, RecapChapter.SUMMARY)
-        if (landscape && hasArt) {
-            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (chapter == RecapChapter.MONTHS) {
+            val months = data.months.filter { it.available && it.milliseconds > 0 }
+            val monthType = if (LocalDensity.current.fontScale > 1.3f) MaterialTheme.typography.headlineLarge
+                else MaterialTheme.typography.displayLarge.copy(fontSize = 64.sp, lineHeight = 72.sp)
+            Column(Modifier.fillMaxWidth().verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                months.chunked(if (landscape) 4 else 2).forEach { row ->
+                    Row(Modifier.fillMaxWidth()) {
+                        row.forEach { month ->
+                            Box(Modifier.weight(1f).aspectRatio(1f).semantics(mergeDescendants = true) {
+                                contentDescription = listOfNotNull(text.month(month.month), month.artist?.title,
+                                    text.minutes(month.milliseconds)).joinToString(", ")
+                            }) {
+                                month.artist?.let { RecapArtwork(it, Modifier.fillMaxSize().clearAndSetSemantics { }) }
+                                Text(text.month(month.month, short = true), Modifier.align(Alignment.Center)
+                                    .clearAndSetSemantics { }, color = Color.White,
+                                    style = monthType.copy(
+                                        shadow = androidx.compose.ui.graphics.Shadow(Color.Black.copy(alpha = 0.35f), blurRadius = 12f)),
+                                    fontWeight = FontWeight.Medium)
+                            }
+                        }
+                        repeat((if (landscape) 4 else 2) - row.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+            }
+        } else if (chapter == RecapChapter.SUMMARY) {
+            Column(Modifier.fillMaxWidth().verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                Row(Modifier.fillMaxWidth().height(if (landscape) 140.dp else 180.dp).clearAndSetSemantics { }) {
+                    data.songs.forEach { RecapArtwork(it, Modifier.weight(1f).fillMaxHeight(), radius = 4) }
+                }
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
+                    SceneText(data, chapter, text, onReplay, onClose)
+                }
+            }
+        } else if (landscape && hasArt) {
+            Row(Modifier.fillMaxSize().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
                 SceneArtwork(data, chapter, Modifier.weight(1f))
                 Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(scroll).padding(vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp)) {
                     SceneText(data, chapter, text, onReplay, onClose)
                 }
             }
+        } else if (chapter == RecapChapter.HABITS || chapter == RecapChapter.TIME) {
+            Column(Modifier.fillMaxWidth().verticalScroll(scroll).heightIn(min = maxHeight),
+                verticalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SceneText(data, chapter, text, onReplay, onClose)
+                }
+                StoryArtworkWall(data, Modifier.fillMaxWidth())
+            }
         } else {
             val artFirst = chapter in listOf(RecapChapter.TRACK, RecapChapter.SONGS, RecapChapter.ARTISTS, RecapChapter.ALBUMS)
-            Column(Modifier.fillMaxWidth().verticalScroll(scroll).heightIn(min = maxHeight).padding(vertical = 20.dp),
+            Column(Modifier.fillMaxWidth().verticalScroll(scroll).heightIn(min = maxHeight).padding(horizontal = 20.dp, vertical = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically)) {
                 if (hasArt && artFirst) SceneArtwork(data, chapter, Modifier.fillMaxWidth())
                 SceneText(data, chapter, text, onReplay, onClose)
@@ -338,10 +401,26 @@ private fun RecapScene(
 }
 
 @Composable
+private fun StoryArtworkWall(data: RecapData, modifier: Modifier = Modifier) {
+    val artwork = (data.albums + data.songs).distinctBy { it.artwork ?: it.id }
+    if (artwork.isEmpty()) return
+    Column(modifier.clearAndSetSemantics { }, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        repeat(3) { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                repeat(3) { column ->
+                    RecapArtwork(artwork[(row * 3 + column) % artwork.size],
+                        Modifier.weight(1f).aspectRatio(1f), radius = 4)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SceneArtwork(data: RecapData, chapter: RecapChapter, modifier: Modifier) {
     Box(modifier, contentAlignment = Alignment.Center) {
         when (chapter) {
-            RecapChapter.TIME, RecapChapter.HABITS -> RecapMosaic(data.songs, Modifier.widthIn(max = 520.dp).fillMaxWidth())
+            RecapChapter.TIME, RecapChapter.HABITS -> StoryArtworkWall(data, Modifier.widthIn(max = 520.dp).fillMaxWidth())
             RecapChapter.TRACK -> data.songs.firstOrNull()?.let {
                 RecapArtwork(it, Modifier.widthIn(max = 280.dp).fillMaxWidth().aspectRatio(1f), radius = 20)
             }
@@ -398,33 +477,21 @@ private fun SceneText(data: RecapData, chapter: RecapChapter, text: RecapText, o
                 }
             }
         }
-        RecapChapter.MONTHS -> {
-            SceneHeading(text.chapterTitle(chapter))
-            val columns = if (LocalDensity.current.fontScale > 1.3f) 2 else 3
-            data.months.filter { it.available && it.milliseconds > 0 }.chunked(columns).forEach { months ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    months.forEach { month ->
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Box(Modifier.fillMaxWidth().heightIn(min = 100.dp)) {
-                                month.artist?.let { RecapArtwork(it, Modifier.size(76.dp).align(Alignment.TopEnd)) }
-                                Text(text.month(month.month, short = true), Modifier.align(Alignment.BottomStart)
-                                    .background(Brush.horizontalGradient(listOf(Color(RecapAppearance.Background).copy(alpha = 0.8f), Color.Transparent))),
-                                    style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
-                            }
-                            month.artist?.let { Text(it.title, style = MaterialTheme.typography.labelSmall,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis) }
-                            Text(text.minutes(month.milliseconds), style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                    repeat(columns - months.size) { Spacer(Modifier.weight(1f)) }
-                }
-            }
+        RecapChapter.MONTHS -> Unit
+        RecapChapter.HABITS -> {
+            val days = text.days(data.habits.longestStreak)
+            val statement = stringResource(R.string.recap_streak_statement, days)
+            val start = statement.indexOf(days)
+            Text(buildAnnotatedString {
+                append(statement)
+                if (start >= 0) addStyle(SpanStyle(color = Color.White), start, start + days.length)
+            }, Modifier.fillMaxWidth().semantics { heading() },
+                color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.SemiBold)
         }
-        RecapChapter.HABITS -> SceneHeading(stringResource(R.string.recap_streak_statement, text.days(data.habits.longestStreak)))
         RecapChapter.SUMMARY -> {
-            RecapMosaic(data.songs, Modifier.fillMaxWidth().heightIn(max = 150.dp))
             Text(data.year.toString(), style = if (LocalDensity.current.fontScale > 1.3f) MaterialTheme.typography.displayLarge
-                else MaterialTheme.typography.displayLarge.copy(fontSize = 80.sp, lineHeight = 88.sp))
+                else MaterialTheme.typography.displayLarge.copy(fontSize = 96.sp, lineHeight = 104.sp))
             val facts = buildList {
                 data.albums.firstOrNull()?.let { add(Triple(stringResource(R.string.recap_top_album), it.title, it.subtitle)) }
                 data.songs.firstOrNull()?.let { add(Triple(stringResource(R.string.recap_top_song), it.title, it.subtitle)) }
@@ -434,13 +501,14 @@ private fun SceneText(data: RecapData, chapter: RecapChapter, text: RecapText, o
             facts.chunked(2).forEach { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                     row.forEach { (label, value, subtitle) -> SummaryFact(label, value, subtitle, Modifier.weight(1f)) }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
         }
         RecapChapter.END -> {
-            SceneHeading(stringResource(R.string.recap_story_end))
-            Button(onReplay, colors = ButtonDefaults.buttonColors(containerColor = Color.White,
-                contentColor = Color(RecapAppearance.Background)), modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.recap_story_end), Modifier.fillMaxWidth().padding(bottom = 32.dp).semantics { heading() },
+                style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+            TextButton(onReplay, modifier = Modifier.fillMaxWidth()) {
                 Icon(painterResource(R.drawable.replay), null, Modifier.size(20.dp))
                 Text(stringResource(R.string.recap_replay), Modifier.padding(start = 8.dp))
             }
@@ -459,8 +527,8 @@ private fun SceneHeading(value: String) {
 private fun SummaryFact(label: String, value: String, subtitle: String?, modifier: Modifier = Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text(label, style = MaterialTheme.typography.labelMedium)
-        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
-            maxLines = 3, overflow = TextOverflow.Ellipsis)
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (!subtitle.isNullOrBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall,
             maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
