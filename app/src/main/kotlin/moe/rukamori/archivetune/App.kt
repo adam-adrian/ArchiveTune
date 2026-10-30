@@ -46,6 +46,7 @@ import moe.rukamori.archivetune.innertube.models.YouTubeLocale
 import moe.rukamori.archivetune.kugou.KuGou
 import moe.rukamori.archivetune.lastfm.LastFM
 import moe.rukamori.archivetune.paxsenix.PaxsenixLyrics
+import moe.rukamori.archivetune.playback.stream.ResolveAudioStreamUseCase
 import moe.rukamori.archivetune.playback.stream.YoutubeiStreamRepository
 import moe.rukamori.archivetune.scrobbling.LastFmServiceConfig
 import moe.rukamori.archivetune.storage.StorageFolderKind
@@ -89,6 +90,9 @@ class App :
 
     @Inject
     lateinit var youtubeiStreamRepository: YoutubeiStreamRepository
+
+    @Inject
+    lateinit var resolveAudioStream: ResolveAudioStreamUseCase
 
     @Inject
     lateinit var startCanvasPolicy: StartCanvasPolicyUseCase
@@ -294,13 +298,12 @@ class App :
                 .map { it.toPlaybackAuthState() }
                 .distinctUntilChanged()
                 .collect { authState ->
-                    val previousFingerprint = YouTube.currentPlaybackAuthState().fingerprint
                     YouTube.authState = authState
-                    if (previousFingerprint != authState.fingerprint) {
-                        YTPlayerUtils.clearPlaybackAuthCaches()
-                        youtubeiStreamRepository.invalidateSessions()
-                        YTPlayerUtils.preWarmYoutubeiPoTokens(authState)
-                    }
+                    resolveAudioStream.clear()
+                    YTPlayerUtils.clearPlaybackAuthCaches()
+                    BotGuardTokenGenerator.invalidateAll()
+                    youtubeiStreamRepository.invalidateSessions()
+                    YTPlayerUtils.preWarmYoutubeiPoTokens(authState)
                 }
         }
 
