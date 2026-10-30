@@ -1,0 +1,138 @@
+name: PR Verification
+
+on:
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
+    inputs:
+      pr_branch:
+        description: 'target branch'
+        required: false
+        default: 'dev'
+
+jobs:
+  verify:
+    if: github.repository_owner == 'adam-adrian'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_branch != '' && inputs.pr_branch || github.ref }}
+
+      - name: Set up Python 3.15
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+
+      - name: Generate translation contributor credits
+        run: python scripts/generate_translation_contributors.py
+
+      - name: Set up JDK 27
+        uses: actions/setup-java@v6
+        with:
+          java-version: '27'
+          distribution: 'temurin'
+
+      - name: Set Up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-cleanup: on-success
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Generate debug.keystore if not exists
+        run: |
+          mkdir -p ~/.android
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkey -v \
+              -keystore ~/.android/debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Build Mobile Arm64 Debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --console=plain assembleGmsMobileArm64Debug --warning-mode summary
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST: "true"
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          API_BEARER_TOKEN: ${{ secrets.API_BEARER_TOKEN }}
+          CANVAS_BEARER_TOKEN: ${{ secrets.CANVAS_BEARER_TOKEN }}
+          EXTRACTOR_BEARER: ${{ secrets.EXTRACTOR_BEARER }}
+
+      - name: Send notification via MTProto
+        shell: bash
+        env:
+          TG_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TG_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+          APK_FILE=$(find app/build/outputs/apk -name "*.apk" -not -name "*-unaligned.apk" | head -n 1)
+          if [ -z "$APK_FILE" ] || [ ! -f "$APK_FILE" ]; then
+            echo "APK file not found!" >&2
+            exit 1
+          fi
+
+          REF_NAME="${{ inputs.pr_branch || github.head_ref || github.ref_name }}"
+          COMMIT_HASH="$(git rev-parse --short HEAD)"
+
+          pip install telethon
+
+          python3 - << 'EOF' "$APK_FILE" "Build Ready: ${REF_NAME} (${COMMIT_HASH})"
+          import os
+          import sys
+          import asyncio
+          from telethon import TelegramClient
+          from telethon.sessions import MemorySession
+
+          api_id = int(os.environ["TG_API_ID"].strip())
+          api_hash = os.environ["TG_API_HASH"].strip()
+          bot_token = os.environ["TG_BOT_TOKEN"].strip()
+          raw_chat_id = os.environ["TG_CHAT_ID"].strip()
+
+          try:
+              chat_id = int(raw_chat_id)
+          except ValueError:
+              chat_id = raw_chat_id
+
+          apk_path = sys.argv[1]
+          caption_text = sys.argv[2]
+
+          def progress(current, total):
+              percent = (current / total) * 100
+              print(f"\rUpload progress: {percent:.1f}% ({current}/{total} bytes)", end="", flush=True)
+
+          async def send():
+              client = TelegramClient(MemorySession(), api_id, api_hash)
+              await client.start(bot_token=bot_token)
+              try:
+                  print(f"Uploading {apk_path} ({os.path.getsize(apk_path)} bytes) via MTProto...")
+                  await client.send_file(
+                      chat_id,
+                      apk_path,
+                      caption=caption_text,
+                      force_document=True,
+                      progress_callback=progress
+                  )
+                  print("\nUpload complete!")
+              finally:
+                  await client.disconnect()
+          asyncio.run(send())
+          EOF
