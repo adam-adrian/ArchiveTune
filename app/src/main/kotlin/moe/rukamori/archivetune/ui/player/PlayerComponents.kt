@@ -78,6 +78,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -116,7 +117,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.animation.core.Animatable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.MaterialShapes
 import kotlin.math.abs
@@ -4524,9 +4524,7 @@ fun V10PlayerContent(
         }
     }
 
-    val shuffleModeEnabled by playerConnection.shuffleModeEnabled.collectAsState()
-    val repeatMode by playerConnection.repeatMode.collectAsState()
-    val currentSong by playerConnection.currentSong.collectAsState(initial = null)
+    val currentSong by playerConnection.currentSong.collectAsStateWithLifecycle(initialValue = null)
     val liked = currentSong?.song?.liked == true
     val onToggleLike = playerConnection::toggleLike
 
@@ -4973,61 +4971,7 @@ fun V10PlayerContent(
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            // ========== TOGGLE ROW (V9 INDIVIDUAL BUTTONS STYLE) ==========
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 20.dp, bottom = 8.dp)
-                    .pointerInput(onQueueClick) {
-                        detectVerticalDragGestures { change, dragAmount ->
-                            if (dragAmount < -15) {
-                                change.consume()
-                                onQueueClick()
-                            }
-                        }
-                    },
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                V10ToggleButton(
-                    checked = false,
-                    onClick = onQueueClick,
-                    accent = accent,
-                    field = field,
-                    iconResId = R.drawable.queue_music,
-                    contentDescription = stringResource(R.string.queue),
-                )
-
-                // Like Button
-                V10ToggleButton(
-                    checked = liked,
-                    onClick = onToggleLike,
-                    accent = accent,
-                    field = field,
-                    iconResId = if (liked) R.drawable.favorite else R.drawable.favorite_border,
-                    contentDescription = "Like"
-                )
-
-                // Add to Playlist Button
-                V10ToggleButton(
-                    checked = false,
-                    onClick = onAddToPlaylistClick,
-                    accent = accent,
-                    field = field,
-                    iconResId = R.drawable.library_add,
-                    contentDescription = "Add to playlist"
-                )
-            }
         }
-
-        Spacer(
-            modifier = Modifier
-                .navigationBarsPadding()
-                .height(6.dp)
-        )
     }
 }
 

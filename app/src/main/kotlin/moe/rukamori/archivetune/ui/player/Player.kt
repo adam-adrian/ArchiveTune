@@ -721,7 +721,9 @@ fun BottomSheetPlayer(
     )
 
     val TextBackgroundColor =
-        if (playerDesignStyle == PlayerDesignStyle.V9 || playerDesignStyle == PlayerDesignStyle.V10) {
+        if (playerDesignStyle == PlayerDesignStyle.V10) {
+            dynamicV10AccentColor
+        } else if (playerDesignStyle == PlayerDesignStyle.V9) {
             dynamicTextColor
         } else if (playerDesignStyle == PlayerDesignStyle.V7 || playerDesignStyle == PlayerDesignStyle.V8) {
             Color.White
@@ -777,6 +779,8 @@ fun BottomSheetPlayer(
                 Pair(Color.White, Color.Black)
             } else if (playerDesignStyle == PlayerDesignStyle.V9) {
                 Pair(dynamicAccentColor, dynamicIconButtonColor)
+            } else if (playerDesignStyle == PlayerDesignStyle.V10) {
+                Pair(dynamicV10FieldColor, dynamicV10AccentColor)
             } else {
                 Pair(tb, ib)
             }
@@ -952,12 +956,14 @@ fun BottomSheetPlayer(
     }
 
     val dynamicQueuePeekHeight =
-        if (playerDesignStyle == PlayerDesignStyle.V5 || playerDesignStyle == PlayerDesignStyle.V10) {
+        if (playerDesignStyle == PlayerDesignStyle.V5) {
             0.dp
         } else if (playerDesignStyle == PlayerDesignStyle.V9) {
             88.dp +
                 (if (showCodecOnPlayer) 24.dp else 0.dp) +
                 (if (sleepTimerEnabled) 42.dp else 0.dp)
+        } else if (playerDesignStyle == PlayerDesignStyle.V10) {
+            if (showCodecOnPlayer) 100.dp else 82.dp
         } else if (playerDesignStyle == PlayerDesignStyle.V7) {
             72.dp
         } else if (showCodecOnPlayer) {
@@ -1910,6 +1916,7 @@ fun BottomSheetPlayer(
             TextBackgroundColor = TextBackgroundColor,
             textButtonColor = textButtonColor,
             iconButtonColor = iconButtonColor,
+            onAddToPlaylistClick = { showChoosePlaylistDialog = true },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
 
