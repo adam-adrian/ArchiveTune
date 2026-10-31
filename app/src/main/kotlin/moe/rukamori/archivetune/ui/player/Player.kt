@@ -12,7 +12,6 @@ package moe.rukamori.archivetune.ui.player
 import android.content.Context
 import android.database.ContentObserver
 import android.graphics.Bitmap
-import android.content.res.Configuration
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -113,7 +112,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -956,9 +954,6 @@ fun BottomSheetPlayer(
             }
         }
     }
-
-    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-
     val dynamicQueuePeekHeight =
         if (playerDesignStyle == PlayerDesignStyle.V5) {
             0.dp
@@ -967,7 +962,7 @@ fun BottomSheetPlayer(
                 (if (showCodecOnPlayer) 24.dp else 0.dp) +
                 (if (sleepTimerEnabled) 42.dp else 0.dp)
         } else if (playerDesignStyle == PlayerDesignStyle.V10) {
-            if (isLandscape) 0.dp else if (showCodecOnPlayer) 100.dp else 82.dp
+            if (showCodecOnPlayer) 100.dp else 82.dp
         } else if (playerDesignStyle == PlayerDesignStyle.V7) {
             72.dp
         } else if (showCodecOnPlayer) {
@@ -1318,7 +1313,8 @@ fun BottomSheetPlayer(
 // distance
 
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            if (maxWidth > maxHeight) {
+            val isLandscape = maxWidth > maxHeight
+            if (isLandscape) {
                 if (playerDesignStyle == PlayerDesignStyle.V5) {
                     val littleBackground = MaterialTheme.colorScheme.primaryContainer
                     val littleTextColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -1576,7 +1572,7 @@ fun BottomSheetPlayer(
                             modifier =
                                 Modifier
                                     .fillMaxSize()
-                                    .padding(bottom = queueCollapsedHeight)
+                                    .padding(bottom = WindowInsets.systemBars.asPaddingValues().calculateBottomPadding())
                                     .windowInsetsPadding(
                                         WindowInsets.systemBars.only(
                                             WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
@@ -1908,21 +1904,21 @@ fun BottomSheetPlayer(
                     }
                 }
             }
+            val v10Landscape = playerDesignStyle == PlayerDesignStyle.V10 && isLandscape
+            QueueFooter(
+                playerBottomSheetState = state,
+                navController = navController,
+                viewModel = queueViewModel,
+                peekHeight = if (v10Landscape) 0.dp else dynamicQueuePeekHeight,
+                onExpandQueue = openQueue,
+                onShowLyrics = { isLyricsScreenVisible = true },
+                TextBackgroundColor = TextBackgroundColor,
+                textButtonColor = textButtonColor,
+                iconButtonColor = iconButtonColor,
+                onAddToPlaylistClick = { showChoosePlaylistDialog = true },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
-
-        QueueFooter(
-            playerBottomSheetState = state,
-            navController = navController,
-            viewModel = queueViewModel,
-            peekHeight = dynamicQueuePeekHeight,
-            onExpandQueue = openQueue,
-            onShowLyrics = { isLyricsScreenVisible = true },
-            TextBackgroundColor = TextBackgroundColor,
-            textButtonColor = textButtonColor,
-            iconButtonColor = iconButtonColor,
-            onAddToPlaylistClick = { showChoosePlaylistDialog = true },
-            modifier = Modifier.align(Alignment.BottomCenter),
-        )
 
         mediaMetadata?.let { metadata ->
             MikoLyricsTransition(
