@@ -1558,6 +1558,7 @@ fun QueueCollapsedContentV10(
             CodecInfoRow(
                 codec = container,
                 bitrate = bitrate,
+                fileSize = "",
                 textColor = accent.copy(alpha = 0.6f),
             )
         }
