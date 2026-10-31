@@ -1555,11 +1555,9 @@ fun QueueCollapsedContentV10(
         if (hasCodec) {
             val container = currentFormat.containerLabel()
             val bitrate = currentFormat.autoRateDisplay()
-            val fileSize = currentFormat.formattedFileSize()
             CodecInfoRow(
                 codec = container,
                 bitrate = bitrate,
-                fileSize = fileSize,
                 textColor = accent.copy(alpha = 0.6f),
             )
         }
