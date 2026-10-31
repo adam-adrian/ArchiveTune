@@ -12,6 +12,7 @@ package moe.rukamori.archivetune.ui.player
 import android.content.Context
 import android.database.ContentObserver
 import android.graphics.Bitmap
+import android.content.res.Configuration
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -112,6 +113,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -955,6 +957,8 @@ fun BottomSheetPlayer(
         }
     }
 
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     val dynamicQueuePeekHeight =
         if (playerDesignStyle == PlayerDesignStyle.V5) {
             0.dp
@@ -963,7 +967,7 @@ fun BottomSheetPlayer(
                 (if (showCodecOnPlayer) 24.dp else 0.dp) +
                 (if (sleepTimerEnabled) 42.dp else 0.dp)
         } else if (playerDesignStyle == PlayerDesignStyle.V10) {
-            if (showCodecOnPlayer) 100.dp else 82.dp
+            if (isLandscape) 0.dp else if (showCodecOnPlayer) 100.dp else 82.dp
         } else if (playerDesignStyle == PlayerDesignStyle.V7) {
             72.dp
         } else if (showCodecOnPlayer) {
