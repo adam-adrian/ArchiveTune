@@ -222,6 +222,7 @@ internal fun QueueFooter(
     textButtonColor: Color,
     iconButtonColor: Color,
     modifier: Modifier = Modifier,
+    onAddToPlaylistClick: () -> Unit = {},
 ) {
     if (peekHeight <= 0.dp) return
     val context = LocalContext.current
@@ -483,7 +484,27 @@ internal fun QueueFooter(
                 )
             }
 
-            PlayerDesignStyle.V5, PlayerDesignStyle.V10 -> Unit
+            PlayerDesignStyle.V10 -> {
+                val shuffleModeEnabled by playerConnection.shuffleModeEnabled.collectAsStateWithLifecycle()
+                val currentSong by playerConnection.currentSong.collectAsStateWithLifecycle(initialValue = null)
+                val currentSongLiked = currentSong?.song?.liked == true
+                QueueCollapsedContentV10(
+                    showCodecOnPlayer = showCodecOnPlayer,
+                    currentFormat = currentFormat,
+                    accent = TextBackgroundColor,
+                    field = textButtonColor,
+                    shuffleModeEnabled = shuffleModeEnabled,
+                    repeatMode = repeatMode,
+                    currentSongLiked = currentSongLiked,
+                    onExpandQueue = onExpandQueue,
+                    onShuffleClick = { viewModel.onAction(QueueAction.ToggleShuffle) },
+                    onRepeatModeClick = { viewModel.onAction(QueueAction.ToggleRepeat) },
+                    onToggleLike = playerConnection::toggleLike,
+                    onAddToPlaylistClick = onAddToPlaylistClick,
+                )
+            }
+
+            PlayerDesignStyle.V5 -> Unit
         }
     }
 }
