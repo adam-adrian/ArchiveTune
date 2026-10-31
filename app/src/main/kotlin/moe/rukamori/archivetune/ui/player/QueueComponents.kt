@@ -1516,74 +1516,6 @@ fun QueueCollapsedContentV9(
 }
 
 /**
- * Segmented item shapes for V10 Connected GroupedButton.
- * Cached singletons to prevent allocations on recomposition hot paths.
- */
-private val EditorialGroupedFirstShape =
-    RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp, topEnd = 6.dp, bottomEnd = 6.dp)
-private val EditorialGroupedMiddleShape = RoundedCornerShape(6.dp)
-private val EditorialGroupedLastShape =
-    RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 18.dp, bottomEnd = 18.dp)
-
-private fun editorialGroupedItemShape(isFirst: Boolean, isLast: Boolean): RoundedCornerShape {
-    return when {
-        isFirst -> EditorialGroupedFirstShape
-        isLast -> EditorialGroupedLastShape
-        else -> EditorialGroupedMiddleShape
-    }
-}
-
-@Composable
-private fun RowScope.EditorialSegmentedButton(
-    onClick: () -> Unit,
-    accent: Color,
-    field: Color,
-    checked: Boolean = false,
-    isToggle: Boolean = false,
-    isFirst: Boolean = false,
-    isLast: Boolean = false,
-    iconResId: Int,
-    contentDescription: String? = null,
-    enableHapticFeedback: Boolean = true,
-    modifier: Modifier = Modifier,
-) {
-    val view = LocalView.current
-
-    val containerColor by animateColorAsState(
-        targetValue = if (isToggle && checked) accent else accent.copy(alpha = 0.08f),
-        label = "EditorialSegmentedBg",
-    )
-    val contentColor = if (isToggle && checked) field else accent
-    val shape = editorialGroupedItemShape(isFirst = isFirst, isLast = isLast)
-
-    Box(
-        modifier =
-            modifier
-                .weight(1f)
-                .height(46.dp)
-                .clip(shape)
-                .background(containerColor)
-                .clickable {
-                    if (enableHapticFeedback) {
-                        view.performHapticFeedback(
-                            android.view.HapticFeedbackConstants.CONTEXT_CLICK,
-                            android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING,
-                        )
-                    }
-                    onClick()
-                },
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            painter = painterResource(iconResId),
-            contentDescription = contentDescription,
-            tint = contentColor,
-            modifier = Modifier.size(22.dp),
-        )
-    }
-}
-
-/**
  * V10 Design Style collapsed queue content.
  * 5-slot connected grouped segmented bar:
  * [ Queue ] [ Shuffle ] [ Repeat ] [ Like ] [ Add to Playlist ]
@@ -1707,5 +1639,75 @@ fun QueueCollapsedContentV10(
                 enableHapticFeedback = enableHapticFeedback,
             )
         }
+    }
+}
+
+// ========== V10 EDITORIAL HELPERS ==========
+
+@Composable
+private fun RowScope.EditorialSegmentedButton(
+    onClick: () -> Unit,
+    accent: Color,
+    field: Color,
+    checked: Boolean = false,
+    isToggle: Boolean = false,
+    isFirst: Boolean = false,
+    isLast: Boolean = false,
+    iconResId: Int,
+    contentDescription: String? = null,
+    enableHapticFeedback: Boolean = true,
+    modifier: Modifier = Modifier,
+) {
+    val view = LocalView.current
+
+    val containerColor by animateColorAsState(
+        targetValue = if (isToggle && checked) accent else accent.copy(alpha = 0.08f),
+        label = "EditorialSegmentedBg",
+    )
+    val contentColor = if (isToggle && checked) field else accent
+    val shape = editorialGroupedItemShape(isFirst = isFirst, isLast = isLast)
+
+    Box(
+        modifier =
+            modifier
+                .weight(1f)
+                .height(46.dp)
+                .clip(shape)
+                .background(containerColor)
+                .clickable {
+                    if (enableHapticFeedback) {
+                        view.performHapticFeedback(
+                            android.view.HapticFeedbackConstants.CONTEXT_CLICK,
+                            android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING,
+                        )
+                    }
+                    onClick()
+                },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(iconResId),
+            contentDescription = contentDescription,
+            tint = contentColor,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+/**
+ * Segmented item shapes for V10 Connected GroupedButton.
+ * Cached singletons to prevent allocations on recomposition hot paths.
+ */
+private val EditorialGroupedFirstShape =
+    RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp, topEnd = 6.dp, bottomEnd = 6.dp)
+private val EditorialGroupedMiddleShape = RoundedCornerShape(6.dp)
+private val EditorialGroupedLastShape =
+    RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 18.dp, bottomEnd = 18.dp)
+
+private fun editorialGroupedItemShape(isFirst: Boolean, isLast: Boolean): RoundedCornerShape {
+    return when {
+        isFirst -> EditorialGroupedFirstShape
+        isLast -> EditorialGroupedLastShape
+        else -> EditorialGroupedMiddleShape
     }
 }
