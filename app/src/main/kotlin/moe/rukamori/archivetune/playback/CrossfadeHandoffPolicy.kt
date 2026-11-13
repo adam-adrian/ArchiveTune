@@ -8,7 +8,6 @@
 package moe.rukamori.archivetune.playback
 
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -17,13 +16,14 @@ internal data class EqualPowerGains(
     val incoming: Float,
 )
 
-internal fun needsCorrectiveCrossfadeSeek(
+internal fun needsForwardCorrectiveCrossfadeSeek(
     primaryPositionMs: Long,
     secondaryPositionMs: Long,
     maximumDriftMs: Long,
 ): Boolean {
     require(maximumDriftMs >= 0L)
-    return abs(primaryPositionMs - secondaryPositionMs) > maximumDriftMs
+    return secondaryPositionMs > primaryPositionMs &&
+        secondaryPositionMs - primaryPositionMs > maximumDriftMs
 }
 
 internal fun hasPlaybackPositionAdvanced(
