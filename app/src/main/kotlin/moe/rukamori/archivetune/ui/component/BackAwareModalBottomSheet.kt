@@ -44,9 +44,11 @@ fun BackAwareModalBottomSheet(
     contentColor: Color = contentColorFor(containerColor),
     dragHandle: @Composable (() -> Unit)? = { BottomSheetDefaults.DragHandle() },
     contentWindowInsets: @Composable () -> WindowInsets = { BottomSheetDefaults.modalWindowInsets },
+    onBackWhileClosing: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val currentOnDismissRequest by rememberUpdatedState(onDismissRequest)
+    val currentOnBackWhileClosing by rememberUpdatedState(onBackWhileClosing)
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
         modifier = modifier,
@@ -66,14 +68,23 @@ fun BackAwareModalBottomSheet(
                     "No NavigationEventDispatcherOwner available for the modal bottom sheet window"
                 }
         CompositionLocalProvider(LocalNavigationEventDispatcherOwner provides windowOwner) {
-            // `isVisible` is true until the sheet finishes animating out, so gating on it kept this
-            // handler registered through the whole closing transition: a press that landed there
-            // started a second `hide()` that had nothing to hide, and the press was discarded. The
-            // target value drops to `Hidden` the moment a close begins, so ownership is handed back
-            // to whatever is underneath as soon as the sheet stops being the thing back applies to.
-            BackHandler(enabled = sheetState.targetValue != SheetValue.Hidden) {
-                scope.launch { sheetState.hide() }.invokeOnCompletion {
-                    if (!sheetState.isVisible) currentOnDismissRequest()
+            // A press must never land on a sheet that is already leaving. Two separate reasons:
+            // `isVisible` reads the settled value, so it stayed true for the whole closing
+            // animation while the handler body had nothing left to hide; and once this handler is
+            // disabled the press does not escape either - the sheet is its own dialog window, whose
+            // dispatcher falls back to cancelling the dialog. So while a close is in flight the
+            // press is forwarded to whatever owns back underneath (`onBackWhileClosing`), and a
+            // settled sheet keeps the plain hide-then-dismiss behaviour.
+            val closing = sheetState.targetValue == SheetValue.Hidden
+            BackHandler(
+                enabled = !closing || (sheetState.isVisible && currentOnBackWhileClosing != null),
+            ) {
+                if (closing) {
+                    currentOnBackWhileClosing?.invoke()
+                } else {
+                    scope.launch { sheetState.hide() }.invokeOnCompletion {
+                        if (!sheetState.isVisible) currentOnDismissRequest()
+                    }
                 }
             }
             content()
