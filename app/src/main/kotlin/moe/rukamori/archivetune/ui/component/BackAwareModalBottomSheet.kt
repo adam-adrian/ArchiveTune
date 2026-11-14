@@ -68,18 +68,21 @@ fun BackAwareModalBottomSheet(
                     "No NavigationEventDispatcherOwner available for the modal bottom sheet window"
                 }
         CompositionLocalProvider(LocalNavigationEventDispatcherOwner provides windowOwner) {
-            // A press must never land on a sheet that is already leaving. Two separate reasons:
-            // `isVisible` reads the settled value, so it stayed true for the whole closing
-            // animation while the handler body had nothing left to hide; and once this handler is
-            // disabled the press does not escape either - the sheet is its own dialog window, whose
-            // dispatcher falls back to cancelling the dialog. So while a close is in flight the
-            // press is forwarded to whatever owns back underneath (`onBackWhileClosing`), and a
-            // settled sheet keeps the plain hide-then-dismiss behaviour.
-            val closing = sheetState.targetValue == SheetValue.Hidden
+            // A press must never land on a sheet that is already leaving, for two separate reasons.
+            // `targetValue` is the intent: it flips to `Hidden` the moment a close starts. And once
+            // this handler is disabled the press does not escape - the sheet is its own dialog
+            // window, and its dispatcher's fallback is `ComponentDialog`'s `onBackPressed()`, whose
+            // `cancel()` this material3 version overrides to a no-op, so the press dies there.
+            //
+            // The gate is `currentValue` (the settled value: still `Expanded` until the close
+            // lands), not `isVisible` - that one already reads false once the sheet crosses
+            // halfway, which is exactly the stretch of the animation a second press arrives in.
             BackHandler(
-                enabled = !closing || (sheetState.isVisible && currentOnBackWhileClosing != null),
+                enabled = sheetState.targetValue != SheetValue.Hidden ||
+                    (sheetState.currentValue != SheetValue.Hidden && currentOnBackWhileClosing != null),
             ) {
-                if (closing) {
+                // Read live, not from composition: this runs in the same frame the state changes.
+                if (sheetState.targetValue == SheetValue.Hidden) {
                     currentOnBackWhileClosing?.invoke()
                 } else {
                     scope.launch { sheetState.hide() }.invokeOnCompletion {
