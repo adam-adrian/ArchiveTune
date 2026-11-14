@@ -15,6 +15,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.SheetState
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.contentColorFor
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -65,7 +66,12 @@ fun BackAwareModalBottomSheet(
                     "No NavigationEventDispatcherOwner available for the modal bottom sheet window"
                 }
         CompositionLocalProvider(LocalNavigationEventDispatcherOwner provides windowOwner) {
-            BackHandler(enabled = sheetState.isVisible) {
+            // `isVisible` is true until the sheet finishes animating out, so gating on it kept this
+            // handler registered through the whole closing transition: a press that landed there
+            // started a second `hide()` that had nothing to hide, and the press was discarded. The
+            // target value drops to `Hidden` the moment a close begins, so ownership is handed back
+            // to whatever is underneath as soon as the sheet stops being the thing back applies to.
+            BackHandler(enabled = sheetState.targetValue != SheetValue.Hidden) {
                 scope.launch { sheetState.hide() }.invokeOnCompletion {
                     if (!sheetState.isVisible) currentOnDismissRequest()
                 }
