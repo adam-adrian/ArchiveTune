@@ -185,6 +185,7 @@ fun Queue(
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         BackAwareModalBottomSheet(
             onDismissRequest = viewModel::dismissQueue,
+            onBackWhileClosing = { playerBottomSheetState.collapseSoft() },
             sheetState = sheetState,
             sheetMaxWidth = Dp.Unspecified,
             modifier = Modifier.fillMaxSize(),

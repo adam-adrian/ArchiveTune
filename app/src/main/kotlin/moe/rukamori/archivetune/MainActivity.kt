@@ -28,6 +28,7 @@ import android.view.WindowManager
 import android.webkit.MimeTypeMap
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContentTransitionScope
@@ -609,6 +610,20 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Lowest-priority back callback: it only runs when no composable wants the press. Back from a
+        // top-level screen sends the app to the background instead of destroying it, so playback and
+        // the mini-player survive - a press made while the player is still collapsing no longer kills
+        // the activity. Registered before setContent so every Compose handler outranks it.
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    moveTaskToBack(true)
+                }
+            },
+        )
+
         window.decorView.layoutDirection = View.LAYOUT_DIRECTION_LTR
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
@@ -1729,8 +1744,10 @@ class MainActivity : ComponentActivity() {
                     val playerBackDispatcherOwner = checkNotNull(LocalNavigationEventDispatcherOwner.current)
                     val screenBackEnabled by remember(playerBottomSheetState, isAppUpdateScreen) {
                         derivedStateOf {
-                            isAppUpdateScreen ||
-                                (!playerBottomSheetState.isExpandedOrExpanding && playerBottomSheetState.progress <= 0f)
+                            // Hand over the moment the player loses its own back action, not when the
+                            // collapse animation ends: the previous `progress <= 0f` left a window where
+                            // the player owned back with nothing to do and the screens could not answer.
+                            isAppUpdateScreen || !playerBottomSheetState.isExpandedOrExpanding
                         }
                     }
                     val screenBackDispatcherOwner =
