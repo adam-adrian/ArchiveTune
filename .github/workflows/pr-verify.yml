@@ -65,6 +65,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Surfaces in About as the build hash pill, so an installed APK can be traced to a commit.
+          export NIGHTLY_BUILD_HASH="$(git rev-parse --short HEAD)"
           ./gradlew --console=plain assembleGmsMobileArm64Debug --warning-mode summary
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
@@ -93,9 +95,14 @@ jobs:
           REF_NAME="${{ inputs.pr_branch || github.head_ref || github.ref_name }}"
           COMMIT_HASH="$(git rev-parse --short HEAD)"
 
+          # Every build otherwise ships as app-gms-mobile-arm64-debug.apk with the same versionCode,
+          # which makes two builds impossible to tell apart after download.
+          UPLOAD_FILE="/tmp/archivetune-$(printf '%s' "$REF_NAME" | tr '/' '-')-${COMMIT_HASH}.apk"
+          cp "$APK_FILE" "$UPLOAD_FILE"
+
           pip install telethon
 
-          python3 - << 'EOF' "$APK_FILE" "Build Ready: ${REF_NAME} (${COMMIT_HASH})"
+          python3 - << 'EOF' "$UPLOAD_FILE" "Build Ready: ${REF_NAME} (${COMMIT_HASH})"
           import os
           import sys
           import asyncio
