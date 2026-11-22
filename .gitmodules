@@ -1,6 +1,7 @@
 [submodule "core"]
 	path = core
-	url = https://github.com/rukamori/core.git
+	url = https://github.com/adam-adrian/core.git
+	branch = feat/youtube-synced-lyrics
 [submodule "lyrics"]
 	path = lyrics
 	url = https://github.com/rukamori/lyrics.git
