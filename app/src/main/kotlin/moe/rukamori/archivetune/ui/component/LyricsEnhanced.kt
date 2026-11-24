@@ -1237,15 +1237,6 @@ private fun buildLineSyncedLrcLine(
     val translation = providedTranslationTextForEntry(entry)
     val normalizedRomanizedText = romanizedText?.trim()?.takeIf { it.isNotEmpty() }
 
-    if (normalizedRomanizedText == null) {
-        return SyncedLine(
-            content = entry.text,
-            translation = translation,
-            start = start,
-            end = end,
-        )
-    }
-
     val syllables =
         buildWrappingKaraokeSyllables(
             content = entry.text,
@@ -1265,23 +1256,26 @@ private fun buildLineSyncedLrcLine(
 
 private fun buildWrappingKaraokeSyllables(
     content: String,
-    romanizedText: String,
+    romanizedText: String?,
     start: Int,
     end: Int,
 ): List<KaraokeSyllable> {
     val contentUnits = content.toLyricsWrappingUnits().ifEmpty { listOf(content) }
-    val phoneticWords = romanizedText.split(Regex("\\s+")).filter(String::isNotEmpty)
-    val phoneticAnchorIndices =
-        contentUnits.indices.filter { index ->
-            contentUnits[index].any(Char::isLetterOrDigit)
-        }
     val phoneticsByUnit = MutableList<String?>(contentUnits.size) { null }
 
-    if (phoneticAnchorIndices.isNotEmpty()) {
-        phoneticWords.forEachIndexed { wordIndex, word ->
-            val anchorIndex = wordIndex * phoneticAnchorIndices.size / phoneticWords.size
-            val unitIndex = phoneticAnchorIndices[anchorIndex]
-            phoneticsByUnit[unitIndex] = listOfNotNull(phoneticsByUnit[unitIndex], word).joinToString(" ")
+    if (romanizedText != null) {
+        val phoneticWords = romanizedText.split(Regex("\\s+")).filter(String::isNotEmpty)
+        val phoneticAnchorIndices =
+            contentUnits.indices.filter { index ->
+                contentUnits[index].any(Char::isLetterOrDigit)
+            }
+
+        if (phoneticAnchorIndices.isNotEmpty() && phoneticWords.isNotEmpty()) {
+            phoneticWords.forEachIndexed { wordIndex, word ->
+                val anchorIndex = wordIndex * phoneticAnchorIndices.size / phoneticWords.size
+                val unitIndex = phoneticAnchorIndices[anchorIndex]
+                phoneticsByUnit[unitIndex] = listOfNotNull(phoneticsByUnit[unitIndex], word).joinToString(" ")
+            }
         }
     }
 
