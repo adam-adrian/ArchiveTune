@@ -1551,7 +1551,7 @@ interface DatabaseDao {
 
     @Query(
         """
-        SELECT CAST(strftime('%H', datetime(timestamp / 1000, 'unixepoch', 'localtime')) AS INTEGER) AS slot,
+        SELECT CAST(strftime('%H', datetime(timestamp / 1000, 'unixepoch')) AS INTEGER) AS slot,
                SUM(playTime) AS timeListened
         FROM event
         WHERE timestamp > :fromTimestamp AND timestamp <= :toTimestamp
@@ -1566,7 +1566,7 @@ interface DatabaseDao {
 
     @Query(
         """
-        SELECT CAST(strftime('%w', datetime(timestamp / 1000, 'unixepoch', 'localtime')) AS INTEGER) AS slot,
+        SELECT CAST(strftime('%w', datetime(timestamp / 1000, 'unixepoch')) AS INTEGER) AS slot,
                SUM(playTime) AS timeListened
         FROM event
         WHERE timestamp > :fromTimestamp AND timestamp <= :toTimestamp
