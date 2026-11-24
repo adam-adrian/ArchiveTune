@@ -220,6 +220,7 @@ import moe.rukamori.archivetune.constants.DarkModeKey
 import moe.rukamori.archivetune.constants.DefaultOpenTabKey
 import moe.rukamori.archivetune.constants.DisableAnimationsKey
 import moe.rukamori.archivetune.constants.DisableScreenshotKey
+import moe.rukamori.archivetune.constants.DynamicAlbumArtThemeKey
 import moe.rukamori.archivetune.constants.DynamicThemeKey
 import moe.rukamori.archivetune.constants.EnableHapticFeedbackKey
 import moe.rukamori.archivetune.constants.FontPreferenceKey
@@ -322,7 +323,7 @@ import moe.rukamori.archivetune.ui.screens.search.onlineSearchResultRoute
 import moe.rukamori.archivetune.ui.screens.settings.DarkMode
 import moe.rukamori.archivetune.ui.screens.settings.NavigationTab
 import moe.rukamori.archivetune.ui.theme.ArchiveTuneTheme
-import moe.rukamori.archivetune.ui.theme.ColorSaver
+import moe.rukamori.archivetune.ui.theme.NullableColorSaver
 import moe.rukamori.archivetune.ui.theme.DefaultThemeColor
 import moe.rukamori.archivetune.ui.theme.extractThemeColor
 import moe.rukamori.archivetune.ui.theme.extractWallpaperThemeColor
@@ -782,6 +783,7 @@ class MainActivity : ComponentActivity() {
             }
 
             val enableDynamicTheme by rememberPreference(DynamicThemeKey, defaultValue = true)
+            val enableAlbumArtDynamicTheme by rememberPreference(DynamicAlbumArtThemeKey, defaultValue = true)
             val customThemeColorValue by rememberPreference(CustomThemeColorKey, defaultValue = "default")
             val darkTheme by rememberEnumPreference(DarkModeKey, defaultValue = DarkMode.AUTO)
             val defaultDisableAnimations = remember(this@MainActivity) { applicationContext.isLowRamDevice() }
@@ -835,8 +837,11 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-            var themeColor by rememberSaveable(stateSaver = ColorSaver) {
-                mutableStateOf(DefaultThemeColor)
+            var albumArtThemeColor by rememberSaveable(stateSaver = NullableColorSaver) {
+                mutableStateOf<Color?>(null)
+            }
+            var wallpaperThemeColor by rememberSaveable(stateSaver = NullableColorSaver) {
+                mutableStateOf<Color?>(null)
             }
 
             LaunchedEffect(legacyUseSystemFont) {
@@ -847,53 +852,84 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            LaunchedEffect(playerConnection, enableDynamicTheme, isSystemInDarkTheme, customThemeColor) {
+            LaunchedEffect(playerConnection, enableAlbumArtDynamicTheme) {
                 val playerConnection = playerConnection
-                if (!enableDynamicTheme || playerConnection == null) {
-                    themeColor = if (!enableDynamicTheme) customThemeColor else DefaultThemeColor
+                if (!enableAlbumArtDynamicTheme || playerConnection == null) {
+                    albumArtThemeColor = null
                     return@LaunchedEffect
                 }
                 playerConnection.service.currentMediaMetadata.collectLatest { song ->
                     if (song != null) {
-                        withContext(Dispatchers.Default) {
-                            try {
-                                val result =
-                                    imageLoader.execute(
-                                        ImageRequest
-                                            .Builder(this@MainActivity)
-                                            .data(song.thumbnailUrl)
-                                            .allowHardware(false)
-                                            .build(),
-                                    )
-                                val extractedColor = result.image?.toBitmap()?.extractThemeColor()
-                                withContext(Dispatchers.Main) {
-                                    themeColor = extractedColor ?: DefaultThemeColor
-                                }
-                            } catch (e: Exception) {
-                                withContext(Dispatchers.Main) {
-                                    themeColor = DefaultThemeColor
+                        val extractedColor =
+                            withContext(Dispatchers.Default) {
+                                try {
+                                    val result =
+                                        imageLoader.execute(
+                                            ImageRequest
+                                                .Builder(this@MainActivity)
+                                                .data(song.thumbnailUrl)
+                                                .allowHardware(false)
+                                                .build(),
+                                        )
+                                    result.image?.toBitmap()?.extractThemeColor()
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    null
                                 }
                             }
-                        }
+                        albumArtThemeColor = extractedColor
                     } else {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            themeColor = DefaultThemeColor
-                        } else {
-                            val wallpaperColor = extractWallpaperThemeColor(this@MainActivity)
-                            themeColor = wallpaperColor ?: customThemeColor
-                            dataStore.edit { prefs ->
-                                prefs[WallpaperExtractionFailedKey] = wallpaperColor == null
-                            }
-                        }
+                        albumArtThemeColor = null
                     }
                 }
             }
 
+            LaunchedEffect(enableDynamicTheme, startupLifecycleOwner) {
+                if (!enableDynamicTheme || Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    wallpaperThemeColor = null
+                    if (!enableDynamicTheme) {
+                        dataStore.edit { prefs ->
+                            prefs[WallpaperExtractionFailedKey] = false
+                        }
+                    }
+                    return@LaunchedEffect
+                }
+                startupLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                    val extractedColor =
+                        withContext(Dispatchers.Default) {
+                            extractWallpaperThemeColor(this@MainActivity)
+                        }
+                    wallpaperThemeColor = extractedColor
+                    dataStore.edit { prefs ->
+                        prefs[WallpaperExtractionFailedKey] = extractedColor == null
+                    }
+                }
+            }
+
+            val activeAlbumArtColor = if (enableAlbumArtDynamicTheme) albumArtThemeColor else null
+            val activeWallpaperColor =
+                if (enableDynamicTheme && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                    wallpaperThemeColor
+                } else {
+                    null
+                }
+            val useSystemDynamicColor =
+                activeAlbumArtColor == null && enableDynamicTheme && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            val resolvedThemeColor = activeAlbumArtColor ?: activeWallpaperColor ?: customThemeColor
+            val resolvedSeedPalette =
+                if (activeAlbumArtColor == null && activeWallpaperColor == null && !useSystemDynamicColor) {
+                    customThemeSeedPalette
+                } else {
+                    null
+                }
+
             ArchiveTuneTheme(
                 darkTheme = useDarkTheme,
                 pureBlack = pureBlack,
-                themeColor = themeColor,
-                seedPalette = if (!enableDynamicTheme) customThemeSeedPalette else null,
+                themeColor = resolvedThemeColor,
+                seedPalette = resolvedSeedPalette,
+                useSystemDynamicColor = useSystemDynamicColor,
                 disableAnimations = disableAnimations,
                 fontPreference = fontPreference,
                 customFontUri = customFontUri,

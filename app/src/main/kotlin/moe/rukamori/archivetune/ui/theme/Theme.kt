@@ -34,6 +34,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -78,14 +79,16 @@ fun ArchiveTuneTheme(
     pureBlack: Boolean = false,
     themeColor: Color = DefaultThemeColor,
     seedPalette: ThemeSeedPalette? = null,
+    useSystemDynamicColor: Boolean =
+        (seedPalette == null && themeColor == DefaultThemeColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S),
     disableAnimations: Boolean = false,
     fontPreference: AppFontPreference = AppFontPreference.DEFAULT,
     customFontUri: String = "",
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
-    val useSystemDynamicColor =
-        (seedPalette == null && themeColor == DefaultThemeColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+    val resolvedUseSystemDynamicColor =
+        useSystemDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
     val customFontFamily =
         produceState<FontFamily?>(
@@ -126,27 +129,27 @@ fun ArchiveTuneTheme(
             paletteStyleFor(seedPalette?.primary ?: themeColor)
         }
 
-    val appColorScheme =
-        remember(seedPalette, themeColor, darkTheme) {
-            if (seedPalette != null) {
-                exactPaletteColorScheme(
-                    palette = seedPalette,
-                    isDark = darkTheme,
-                )
-            } else {
-                materialKolorDynamicColorScheme(
-                    keyColor = themeColor,
-                    isDark = darkTheme,
-                    style = paletteStyle,
-                )
-            }
-        }
-
+    val configuration = LocalConfiguration.current
     val baseColorScheme =
-        if (useSystemDynamicColor) {
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        if (resolvedUseSystemDynamicColor) {
+            remember(context, configuration, darkTheme) {
+                if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            }
         } else {
-            appColorScheme
+            remember(seedPalette, themeColor, darkTheme, paletteStyle) {
+                if (seedPalette != null) {
+                    exactPaletteColorScheme(
+                        palette = seedPalette,
+                        isDark = darkTheme,
+                    )
+                } else {
+                    materialKolorDynamicColorScheme(
+                        keyColor = themeColor,
+                        isDark = darkTheme,
+                        style = paletteStyle,
+                    )
+                }
+            }
         }
 
     val colorScheme =
@@ -508,6 +511,14 @@ val ColorSaver =
         override fun restore(value: Int): Color = value.toComposeColor()
 
         override fun SaverScope.save(value: Color): Int = value.toArgb()
+    }
+
+val NullableColorSaver =
+    object : Saver<Color?, Long> {
+        override fun restore(value: Long): Color? =
+            if (value == Long.MIN_VALUE) null else value.toInt().toComposeColor()
+
+        override fun SaverScope.save(value: Color?): Long = value?.toArgb()?.toLong() ?: Long.MIN_VALUE
     }
 
 @Serializable

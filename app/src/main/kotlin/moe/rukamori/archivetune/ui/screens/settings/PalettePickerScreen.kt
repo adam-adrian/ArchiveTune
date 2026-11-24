@@ -1182,10 +1182,14 @@ fun PalettePickerScreen(navController: NavController) {
     fun applyPalette(palette: ThemePalette) {
         if (!isCustomActive && !dynamicThemeEnabled && palette.id == selectedPalette.id) return
         val previousValue = customThemeColor
+        val previousDynamicThemeEnabled = dynamicThemeEnabled
         setDynamicThemeEnabled(false)
         onCustomThemeColorChange(palette.id)
         if (isCustomActive) {
-            snackbarHostState.announce(scope, appliedMessage, undoLabel) { onCustomThemeColorChange(previousValue) }
+            snackbarHostState.announce(scope, appliedMessage, undoLabel) {
+                setDynamicThemeEnabled(previousDynamicThemeEnabled)
+                onCustomThemeColorChange(previousValue)
+            }
         }
     }
 

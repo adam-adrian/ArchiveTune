@@ -42,6 +42,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.rukamori.archivetune.MainActivity
 import moe.rukamori.archivetune.R
+import moe.rukamori.archivetune.constants.DynamicAlbumArtThemeKey
+import moe.rukamori.archivetune.constants.DynamicThemeKey
 import moe.rukamori.archivetune.constants.RedownloadOnRestoreKey
 import moe.rukamori.archivetune.backup.BackupArchiveCategory
 import moe.rukamori.archivetune.backup.BackupArchiveRepository
@@ -850,6 +852,9 @@ class BackupRestoreViewModel
 
             context.dataStore.edit { prefs ->
                 booleans.forEach { (k, v) -> prefs[booleanPreferencesKey(k)] = v }
+                if (DynamicAlbumArtThemeKey.name !in booleans && DynamicThemeKey.name in booleans) {
+                    prefs[DynamicAlbumArtThemeKey] = booleans.getValue(DynamicThemeKey.name)
+                }
                 ints.forEach { (k, v) -> prefs[intPreferencesKey(k)] = v }
                 longs.forEach { (k, v) -> prefs[longPreferencesKey(k)] = v }
                 floats.forEach { (k, v) -> prefs[floatPreferencesKey(k)] = v }
