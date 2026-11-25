@@ -1417,6 +1417,22 @@ class MusicService :
         snapshotFlow { sleepTimer.isActive }
             .distinctUntilChanged()
             .collect(scope) { updateNotification() }
+        combine(
+            currentMediaMetadata.map { it?.id to it?.isPodcast }.distinctUntilChanged(),
+            currentSong
+                .map { song ->
+                    song?.let {
+                        NotificationSongState(
+                            id = it.id,
+                            liked = it.song.liked,
+                            inLibrary = it.song.inLibrary != null,
+                            isLocal = it.song.isLocal,
+                        )
+                    }
+                }.distinctUntilChanged(),
+        ) { media, song -> media to song }
+            .distinctUntilChanged()
+            .collect(scope) { updateNotification() }
         currentMediaMetadata
             .flatMapLatest { mediaMetadata ->
                 if (mediaMetadata == null) flowOf(null) else moduleDownloadUtil.getDownload(mediaMetadata.id)
@@ -1497,7 +1513,6 @@ class MusicService :
         }
 
         currentSong.debounce(300).collect(scope) { song ->
-            updateNotification()
             requestDiscordSync(
                 reason =
                     if (song == null) {
@@ -3705,8 +3720,8 @@ class MusicService :
         action: MediaNotificationAction,
         configuration: MediaNotificationConfiguration,
     ): CommandButton {
-        val song = currentSong.value
         val mediaMetadata = currentMediaMetadata.value
+        val song = currentSong.value?.takeIf { mediaMetadata != null && it.id == mediaMetadata.id }
         return when (action) {
             MediaNotificationAction.LIKE -> {
                 val liked = song?.song?.liked == true
@@ -3714,7 +3729,7 @@ class MusicService :
                     displayName = getString(if (liked) R.string.action_remove_like else R.string.action_like),
                     iconResId = if (liked) R.drawable.favorite else R.drawable.favorite_border,
                     command = CommandToggleLike,
-                    enabled = song != null,
+                    enabled = mediaMetadata != null,
                 )
             }
 
@@ -3749,7 +3764,7 @@ class MusicService :
                     displayName = getString(R.string.start_radio),
                     iconResId = R.drawable.radio,
                     command = CommandToggleStartRadio,
-                    enabled = song != null && mediaMetadata?.isPodcast != true,
+                    enabled = mediaMetadata != null && !mediaMetadata.isPodcast && !isCurrentPlaybackItemLocal(mediaMetadata),
                 )
 
             MediaNotificationAction.LIBRARY -> {
@@ -3758,7 +3773,7 @@ class MusicService :
                     displayName = getString(if (inLibrary) R.string.remove_from_library else R.string.add_to_library),
                     iconResId = if (inLibrary) R.drawable.library_add_check else R.drawable.library_add,
                     command = CommandToggleLibrary,
-                    enabled = song != null,
+                    enabled = mediaMetadata != null,
                 )
             }
 
@@ -3836,7 +3851,8 @@ class MusicService :
 
     private fun toggleCurrentDownload() {
         val mediaMetadata = currentMediaMetadata.value ?: return
-        if (!canDownloadFromNotification(mediaMetadata, currentSong.value)) return
+        val song = currentSong.value?.takeIf { it.id == mediaMetadata.id }
+        if (!canDownloadFromNotification(mediaMetadata, song)) return
         when (moduleDownloadUtil.downloads.value[mediaMetadata.id]?.state) {
             Download.STATE_COMPLETED,
             Download.STATE_QUEUED,
@@ -3928,27 +3944,43 @@ class MusicService :
             }
     }
 
-    private fun buildAndroidAutoButtons(configuration: AndroidAutoConfiguration): List<CommandButton> =
-        listOf(configuration.primaryAction, configuration.secondaryAction)
+    private data class NotificationSongState(
+        val id: String,
+        val liked: Boolean,
+        val inLibrary: Boolean,
+        val isLocal: Boolean,
+    )
+
+    private fun buildAndroidAutoButtons(configuration: AndroidAutoConfiguration): List<CommandButton> {
+        val mediaMetadata = currentMediaMetadata.value
+        val song = currentSong.value?.takeIf { mediaMetadata != null && it.id == mediaMetadata.id }
+        return listOf(configuration.primaryAction, configuration.secondaryAction)
             .filter { it != AndroidAutoCustomAction.NONE }
             .distinct()
             .map { action ->
                 when (action) {
-                    AndroidAutoCustomAction.LIKE -> CommandButton.Builder()
-                        .setDisplayName(
-                            getString(if (currentSong.value?.song?.liked == true) R.string.action_remove_like else R.string.action_like),
-                        )
-                        .setIconResId(
-                            if (currentSong.value?.song?.liked == true) R.drawable.favorite else R.drawable.favorite_border,
-                        )
-                        .setSessionCommand(CommandToggleLike)
-                        .setEnabled(currentSong.value != null)
-                        .build()
+                    AndroidAutoCustomAction.LIKE -> {
+                        val liked = song?.song?.liked == true
+                        CommandButton.Builder()
+                            .setDisplayName(
+                                getString(if (liked) R.string.action_remove_like else R.string.action_like),
+                            )
+                            .setIconResId(
+                                if (liked) R.drawable.favorite else R.drawable.favorite_border,
+                            )
+                            .setSessionCommand(CommandToggleLike)
+                            .setEnabled(mediaMetadata != null)
+                            .build()
+                    }
                     AndroidAutoCustomAction.START_RADIO -> CommandButton.Builder()
                         .setDisplayName(getString(R.string.start_radio))
                         .setIconResId(R.drawable.radio)
                         .setSessionCommand(CommandToggleStartRadio)
-                        .setEnabled(currentSong.value != null && currentMediaMetadata.value?.isPodcast != true)
+                        .setEnabled(
+                            mediaMetadata != null &&
+                                !mediaMetadata.isPodcast &&
+                                !isCurrentPlaybackItemLocal(mediaMetadata),
+                        )
                         .build()
                     AndroidAutoCustomAction.SHUFFLE -> CommandButton.Builder()
                         .setDisplayName(
@@ -3979,6 +4011,7 @@ class MusicService :
                     AndroidAutoCustomAction.NONE -> error("None is not a media button")
                 }
             }
+    }
 
     private suspend fun recoverSong(
         mediaId: String,
@@ -6356,9 +6389,27 @@ class MusicService :
         }.getOrNull()
 
     private fun toggleLibrary() {
-        database.query {
-            currentSong.value?.let {
-                update(it.song.toggleLibrary())
+        val mediaMetadata = currentMediaMetadata.value ?: return
+        ioScope.launch {
+            try {
+                toggleLikeMutex.withLock {
+                    database.withTransaction {
+                        val song =
+                            getSongById(mediaMetadata.id)
+                                ?: run {
+                                    insert(mediaMetadata) {
+                                        it.copy(isLocal = mediaMetadata.id.isLocalMediaId())
+                                    }
+                                    getSongById(mediaMetadata.id)
+                                }
+                                ?: return@withTransaction
+                        update(song.song.toggleLibrary())
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                reportException(error)
             }
         }
     }
@@ -7154,9 +7205,10 @@ class MusicService :
     }
 
     private fun isCurrentPlaybackItemLocal(currentMediaMetadata: MediaMetadata): Boolean =
-        currentSong.value?.song?.isLocal == true ||
+        currentSong.value?.takeIf { it.id == currentMediaMetadata.id }?.song?.isLocal == true ||
             currentMediaMetadata.id.trim().isLocalMediaId() ||
             player.currentMediaItem
+                ?.takeIf { it.mediaId == currentMediaMetadata.id || it.metadata?.id == currentMediaMetadata.id }
                 ?.localConfiguration
                 ?.uri
                 ?.shouldBypassPlayerCache() == true
