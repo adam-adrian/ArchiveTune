@@ -33,6 +33,7 @@ fun rememberControlledSliderState(
     value: Float,
     valueRange: ClosedFloatingPointRange<Float>,
     steps: Int = 0,
+    syncValue: Boolean = true,
 ): SliderState {
     val sliderState =
         remember(valueRange, steps) {
@@ -42,8 +43,10 @@ fun rememberControlledSliderState(
                 trackRange = valueRange,
             )
         }
-    LaunchedEffect(sliderState, value) {
-        sliderState.value = value.coerceIn(valueRange)
+    LaunchedEffect(sliderState, value, syncValue) {
+        if (syncValue) {
+            sliderState.value = value.coerceIn(valueRange)
+        }
     }
     return sliderState
 }
