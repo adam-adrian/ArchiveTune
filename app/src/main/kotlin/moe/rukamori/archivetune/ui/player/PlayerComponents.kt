@@ -2029,8 +2029,8 @@ fun V8PlayerControlsContent(
     sliderPosition: Long?,
     position: Long,
     duration: Long,
-    volume: Float,
-    isVolumeDragging: Boolean = false,
+    volumeProvider: () -> Float,
+    isVolumeDraggingProvider: () -> Boolean = { false },
     showVolumeBar: Boolean,
     currentFormat: FormatEntity?,
     playerConnection: PlayerConnection,
@@ -2172,8 +2172,8 @@ fun V8PlayerControlsContent(
                 Spacer(Modifier.height(transportToVolumeGap))
 
                 V8VolumeControls(
-                    volume = volume,
-                    isVolumeDragging = isVolumeDragging,
+                    volumeProvider = volumeProvider,
+                    isVolumeDraggingProvider = isVolumeDraggingProvider,
                     foreground = foreground,
                     secondaryForeground = secondaryForeground,
                     onVolumeChange = onVolumeChange,
@@ -2197,8 +2197,8 @@ fun V8PlayerContent(
     sliderPosition: Long?,
     position: Long,
     duration: Long,
-    volume: Float,
-    isVolumeDragging: Boolean = false,
+    volumeProvider: () -> Float,
+    isVolumeDraggingProvider: () -> Boolean = { false },
     showVolumeBar: Boolean,
     playerConnection: PlayerConnection,
     navController: NavController,
@@ -2266,8 +2266,8 @@ fun V8PlayerContent(
             sliderPosition = sliderPosition,
             position = position,
             duration = duration,
-            volume = volume,
-            isVolumeDragging = isVolumeDragging,
+            volumeProvider = volumeProvider,
+            isVolumeDraggingProvider = isVolumeDraggingProvider,
             showVolumeBar = showVolumeBar,
             currentFormat = currentFormat,
             foreground = foreground,
@@ -2310,8 +2310,8 @@ fun V8PlayerContent(
             sliderPosition = sliderPosition,
             position = position,
             duration = duration,
-            volume = volume,
-            isVolumeDragging = isVolumeDragging,
+            volumeProvider = volumeProvider,
+            isVolumeDraggingProvider = isVolumeDraggingProvider,
             showVolumeBar = showVolumeBar,
             currentFormat = currentFormat,
             foreground = foreground,
@@ -2357,8 +2357,8 @@ private fun V8PortraitContent(
     sliderPosition: Long?,
     position: Long,
     duration: Long,
-    volume: Float,
-    isVolumeDragging: Boolean,
+    volumeProvider: () -> Float,
+    isVolumeDraggingProvider: () -> Boolean,
     showVolumeBar: Boolean,
     currentFormat: FormatEntity?,
     foreground: Color,
@@ -2495,8 +2495,8 @@ private fun V8PortraitContent(
                 Spacer(Modifier.height(transportToVolumeGap))
 
                 V8VolumeControls(
-                    volume = volume,
-                    isVolumeDragging = isVolumeDragging,
+                    volumeProvider = volumeProvider,
+                    isVolumeDraggingProvider = isVolumeDraggingProvider,
                     foreground = foreground,
                     secondaryForeground = secondaryForeground,
                     onVolumeChange = onVolumeChange,
@@ -2527,8 +2527,8 @@ private fun V8LandscapeContent(
     sliderPosition: Long?,
     position: Long,
     duration: Long,
-    volume: Float,
-    isVolumeDragging: Boolean,
+    volumeProvider: () -> Float,
+    isVolumeDraggingProvider: () -> Boolean,
     showVolumeBar: Boolean,
     currentFormat: FormatEntity?,
     foreground: Color,
@@ -2614,8 +2614,8 @@ private fun V8LandscapeContent(
                     Spacer(Modifier.height(4.dp))
 
                     V8VolumeControls(
-                        volume = volume,
-                        isVolumeDragging = isVolumeDragging,
+                        volumeProvider = volumeProvider,
+                        isVolumeDraggingProvider = isVolumeDraggingProvider,
                         foreground = foreground,
                         secondaryForeground = secondaryForeground,
                         onVolumeChange = onVolumeChange,
@@ -3034,17 +3034,19 @@ private fun V8TransportButton(
 
 @Composable
 private fun V8VolumeControls(
-    volume: Float,
-    isVolumeDragging: Boolean,
+    volumeProvider: () -> Float,
+    isVolumeDraggingProvider: () -> Boolean,
     foreground: Color,
     secondaryForeground: Color,
     onVolumeChange: (Float) -> Unit,
     onVolumeChangeFinished: () -> Unit,
 ) {
+    val isVolumeDragging = isVolumeDraggingProvider()
     val displayVolume =
         rememberSmoothVolumeFraction(
-            volume = volume,
+            volume = volumeProvider(),
             isDragging = isVolumeDragging,
+            onDispose = onVolumeChangeFinished,
         )
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -3064,6 +3066,7 @@ private fun V8VolumeControls(
             trackHeight = 8.dp,
             onValueChange = { onVolumeChange(it.coerceIn(0f, 1f)) },
             onValueChangeFinished = onVolumeChangeFinished,
+            syncValue = !isVolumeDragging,
             modifier =
                 Modifier
                     .weight(1f)
@@ -3090,6 +3093,7 @@ private fun V8FlatSlider(
     onValueChangeFinished: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    syncValue: Boolean = true,
 ) {
     val safeEnd = valueRange.endInclusive.coerceAtLeast(valueRange.start + 1f)
     val safeRange = valueRange.start..safeEnd
@@ -3104,6 +3108,7 @@ private fun V8FlatSlider(
         rememberControlledSliderState(
             value = value.coerceIn(safeRange),
             valueRange = safeRange,
+            syncValue = syncValue,
         )
 
     Slider(

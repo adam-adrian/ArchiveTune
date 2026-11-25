@@ -44,6 +44,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -109,8 +110,8 @@ fun ImmersivePlayerScreen(
     state: ImmersivePlayerScreenState,
     disableBlur: Boolean,
     backdropBlurAmount: Int,
-    volume: Float,
-    isVolumeDragging: Boolean,
+    volumeProvider: () -> Float,
+    isVolumeDraggingProvider: () -> Boolean,
     showVolumeBar: Boolean,
     showCodecOnPlayer: Boolean,
     contentBottomPadding: Dp,
@@ -127,8 +128,8 @@ fun ImmersivePlayerScreen(
                 model = state.model,
                 disableBlur = disableBlur,
                 backdropBlurAmount = backdropBlurAmount,
-                volume = volume,
-                isVolumeDragging = isVolumeDragging,
+                volumeProvider = volumeProvider,
+                isVolumeDraggingProvider = isVolumeDraggingProvider,
                 showVolumeBar = showVolumeBar,
                 showCodecOnPlayer = showCodecOnPlayer,
                 contentBottomPadding = contentBottomPadding,
@@ -144,8 +145,8 @@ fun ImmersivePlayerScreen(
                     model = model,
                     disableBlur = disableBlur,
                     backdropBlurAmount = backdropBlurAmount,
-                    volume = volume,
-                    isVolumeDragging = isVolumeDragging,
+                    volumeProvider = volumeProvider,
+                    isVolumeDraggingProvider = isVolumeDraggingProvider,
                     showVolumeBar = showVolumeBar,
                     showCodecOnPlayer = showCodecOnPlayer,
                     contentBottomPadding = contentBottomPadding,
@@ -174,8 +175,8 @@ private fun ImmersivePlayerContent(
     model: ImmersivePlayerUiModel,
     disableBlur: Boolean,
     backdropBlurAmount: Int,
-    volume: Float,
-    isVolumeDragging: Boolean,
+    volumeProvider: () -> Float,
+    isVolumeDraggingProvider: () -> Boolean,
     showVolumeBar: Boolean,
     showCodecOnPlayer: Boolean,
     contentBottomPadding: Dp,
@@ -209,8 +210,8 @@ private fun ImmersivePlayerContent(
                 model = model,
                 disableBlur = disableBlur,
                 backdropBlurAmount = backdropBlurAmount,
-                volume = volume,
-                isVolumeDragging = isVolumeDragging,
+                volumeProvider = volumeProvider,
+                isVolumeDraggingProvider = isVolumeDraggingProvider,
                 showVolumeBar = showVolumeBar,
                 showCodecOnPlayer = showCodecOnPlayer,
                 contentBottomPadding = contentBottomPadding,
@@ -223,8 +224,8 @@ private fun ImmersivePlayerContent(
                 model = model,
                 disableBlur = disableBlur,
                 backdropBlurAmount = backdropBlurAmount,
-                volume = volume,
-                isVolumeDragging = isVolumeDragging,
+                volumeProvider = volumeProvider,
+                isVolumeDraggingProvider = isVolumeDraggingProvider,
                 showVolumeBar = showVolumeBar,
                 showCodecOnPlayer = showCodecOnPlayer,
                 contentBottomPadding = contentBottomPadding,
@@ -241,8 +242,8 @@ private fun ImmersivePortrait(
     model: ImmersivePlayerUiModel,
     disableBlur: Boolean,
     backdropBlurAmount: Int,
-    volume: Float,
-    isVolumeDragging: Boolean,
+    volumeProvider: () -> Float,
+    isVolumeDraggingProvider: () -> Boolean,
     showVolumeBar: Boolean,
     showCodecOnPlayer: Boolean,
     contentBottomPadding: Dp,
@@ -319,8 +320,8 @@ private fun ImmersivePortrait(
             Spacer(modifier = Modifier.weight(1f))
             if (showVolumeBar) {
                 VolumeControls(
-                    volume = volume,
-                    isVolumeDragging = isVolumeDragging,
+                    volumeProvider = volumeProvider,
+                    isVolumeDraggingProvider = isVolumeDraggingProvider,
                     onVolumeChange = onVolumeChange,
                     onVolumeChangeFinished = onVolumeChangeFinished,
                 )
@@ -335,8 +336,8 @@ private fun ImmersiveLandscape(
     model: ImmersivePlayerUiModel,
     disableBlur: Boolean,
     backdropBlurAmount: Int,
-    volume: Float,
-    isVolumeDragging: Boolean,
+    volumeProvider: () -> Float,
+    isVolumeDraggingProvider: () -> Boolean,
     showVolumeBar: Boolean,
     showCodecOnPlayer: Boolean,
     contentBottomPadding: Dp,
@@ -405,8 +406,8 @@ private fun ImmersiveLandscape(
             if (showVolumeBar) {
                 Spacer(modifier = Modifier.height(4.dp))
                 VolumeControls(
-                    volume = volume,
-                    isVolumeDragging = isVolumeDragging,
+                    volumeProvider = volumeProvider,
+                    isVolumeDraggingProvider = isVolumeDraggingProvider,
                     onVolumeChange = onVolumeChange,
                     onVolumeChangeFinished = onVolumeChangeFinished,
                 )
@@ -800,15 +801,16 @@ private fun TransportControls(
 
 @Composable
 private fun VolumeControls(
-    volume: Float,
-    isVolumeDragging: Boolean,
+    volumeProvider: () -> Float,
+    isVolumeDraggingProvider: () -> Boolean,
     onVolumeChange: (Float) -> Unit,
     onVolumeChangeFinished: () -> Unit,
 ) {
     val displayVolume =
         rememberSmoothVolumeFraction(
-            volume = volume,
-            isDragging = isVolumeDragging,
+            volume = volumeProvider(),
+            isDragging = isVolumeDraggingProvider(),
+            onDispose = onVolumeChangeFinished,
         )
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
@@ -850,6 +852,12 @@ private fun ThinProgressSlider(
     val focusInteractionSource = remember { MutableInteractionSource() }
     val isFocused by focusInteractionSource.collectIsFocusedAsState()
     var keySeekValue by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(isFocused) {
+        if (!isFocused && keySeekValue != null) {
+            keySeekValue = null
+            currentOnValueChangeFinished()
+        }
+    }
     val keyStep = (span / 100L).coerceAtLeast(1L)
     val interactionModifier =
         remember(valueRange) {
@@ -913,7 +921,7 @@ private fun ThinProgressSlider(
                     contentDescription = accessibilityLabel
                     progressBarRangeInfo = ProgressBarRangeInfo(fraction, 0f..1f)
                     setProgress { targetValue ->
-                        val selected = valueRange.first + (span * targetValue.coerceIn(0f, 1f)).toLong()
+                        val selected = valueRange.first + (span * targetValue.coerceIn(0f, 1f)).roundToLong()
                         currentOnValueChange(selected)
                         currentOnValueChangeFinished()
                         true

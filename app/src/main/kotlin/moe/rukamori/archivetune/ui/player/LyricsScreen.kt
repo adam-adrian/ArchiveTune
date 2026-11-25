@@ -219,6 +219,14 @@ fun LyricsScreen(
     val playbackState by playerConnection.playbackState.collectAsStateWithLifecycle()
     val isPlaying by playerConnection.isPlaying.collectAsStateWithLifecycle()
     val deviceMusicVolumeController = rememberDeviceMusicVolumeController()
+    val volumeProvider =
+        remember(deviceMusicVolumeController) {
+            { deviceMusicVolumeController.volumeFraction }
+        }
+    val isVolumeDraggingProvider =
+        remember(deviceMusicVolumeController) {
+            { deviceMusicVolumeController.isDragging }
+        }
     val onVolumeChange =
         remember(deviceMusicVolumeController) {
             { volume: Float ->
@@ -352,7 +360,7 @@ fun LyricsScreen(
     val durationState = remember(mediaMetadata.id) { mutableLongStateOf(C.TIME_UNSET) }
     var sliderPosition by remember(mediaMetadata.id) { mutableStateOf<Long?>(null) }
     var gradientColors by remember(mediaMetadata.thumbnailUrl) { mutableStateOf(AppleMusicFallbackGradient) }
-    val isScrubbing = sliderPosition != null
+    val isScrubbing = sliderPosition != null || deviceMusicVolumeController.isDragging
 
     LaunchedEffect(controlsVisibility, isPlaying, isScrubbing, controlsInteraction) {
         autoControlsVisible = true
@@ -591,8 +599,8 @@ fun LyricsScreen(
                                 sliderPosition = sliderPosition,
                                 isPlaying = isPlaying,
                                 isLoading = isLoading,
-                                volume = deviceMusicVolumeController.volumeFraction,
-                                isVolumeDragging = deviceMusicVolumeController.isDragging,
+                                volumeProvider = volumeProvider,
+                                isVolumeDraggingProvider = isVolumeDraggingProvider,
                                 onPositionChange = { sliderPosition = it },
                                 onPositionChangeFinished = {
                                     sliderPosition?.let {
@@ -668,8 +676,8 @@ fun LyricsScreen(
                         sliderPosition = sliderPosition,
                         isPlaying = isPlaying,
                         isLoading = isLoading,
-                        volume = deviceMusicVolumeController.volumeFraction,
-                        isVolumeDragging = deviceMusicVolumeController.isDragging,
+                        volumeProvider = volumeProvider,
+                        isVolumeDraggingProvider = isVolumeDraggingProvider,
                         onPositionChange = { sliderPosition = it },
                         onPositionChangeFinished = {
                             sliderPosition?.let {
@@ -1047,8 +1055,8 @@ private fun AppleMusicControls(
     sliderPosition: Long?,
     isPlaying: Boolean,
     isLoading: Boolean,
-    volume: Float,
-    isVolumeDragging: Boolean,
+    volumeProvider: () -> Float,
+    isVolumeDraggingProvider: () -> Boolean,
     onPositionChange: (Long) -> Unit,
     onPositionChangeFinished: () -> Unit,
     onVolumeChange: (Float) -> Unit,
@@ -1189,43 +1197,13 @@ private fun AppleMusicControls(
             )
         }
 
-        Row(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 26.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.volume_off),
-                contentDescription = stringResource(R.string.minimum_volume),
-                tint = foregroundColor.copy(alpha = 0.66f),
-                modifier = Modifier.size(17.dp),
-            )
-            val displayVolume =
-                rememberSmoothVolumeFraction(
-                    volume = volume,
-                    isDragging = isVolumeDragging,
-                )
-            AppleMusicSlider(
-                value = displayVolume,
-                valueRange = 0f..1f,
-                activeColor = foregroundColor.copy(alpha = 0.88f),
-                inactiveColor = foregroundColor.copy(alpha = 0.24f),
-                onValueChange = onVolumeChange,
-                onValueChangeFinished = onVolumeChangeFinished,
-                modifier =
-                    Modifier
-                        .weight(1f)
-                        .padding(horizontal = 16.dp),
-            )
-            Icon(
-                painter = painterResource(R.drawable.volume_up),
-                contentDescription = stringResource(R.string.maximum_volume),
-                tint = foregroundColor.copy(alpha = 0.66f),
-                modifier = Modifier.size(19.dp),
-            )
-        }
+        AppleMusicVolumeRow(
+            volumeProvider = volumeProvider,
+            isVolumeDraggingProvider = isVolumeDraggingProvider,
+            foregroundColor = foregroundColor,
+            onVolumeChange = onVolumeChange,
+            onVolumeChangeFinished = onVolumeChangeFinished,
+        )
 
         Row(
             modifier =
@@ -1372,6 +1350,56 @@ private fun AppleMusicPressableIcon(
     }
 }
 
+@Composable
+private fun AppleMusicVolumeRow(
+    volumeProvider: () -> Float,
+    isVolumeDraggingProvider: () -> Boolean,
+    foregroundColor: Color,
+    onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit,
+) {
+    val isVolumeDragging = isVolumeDraggingProvider()
+    val displayVolume =
+        rememberSmoothVolumeFraction(
+            volume = volumeProvider(),
+            isDragging = isVolumeDragging,
+            onDispose = onVolumeChangeFinished,
+        )
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 26.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.volume_off),
+            contentDescription = stringResource(R.string.minimum_volume),
+            tint = foregroundColor.copy(alpha = 0.66f),
+            modifier = Modifier.size(17.dp),
+        )
+        AppleMusicSlider(
+            value = displayVolume,
+            valueRange = 0f..1f,
+            activeColor = foregroundColor.copy(alpha = 0.88f),
+            inactiveColor = foregroundColor.copy(alpha = 0.24f),
+            onValueChange = onVolumeChange,
+            onValueChangeFinished = onVolumeChangeFinished,
+            syncValue = !isVolumeDragging,
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .padding(horizontal = 16.dp),
+        )
+        Icon(
+            painter = painterResource(R.drawable.volume_up),
+            contentDescription = stringResource(R.string.maximum_volume),
+            tint = foregroundColor.copy(alpha = 0.66f),
+            modifier = Modifier.size(19.dp),
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppleMusicSlider(
@@ -1382,6 +1410,7 @@ private fun AppleMusicSlider(
     onValueChange: (Float) -> Unit,
     onValueChangeFinished: () -> Unit,
     modifier: Modifier = Modifier,
+    syncValue: Boolean = true,
 ) {
     val safeStart = valueRange.start
     val safeEnd = valueRange.endInclusive.coerceAtLeast(safeStart + 1f)
@@ -1410,6 +1439,7 @@ private fun AppleMusicSlider(
         rememberControlledSliderState(
             value = value.coerceIn(safeRange),
             valueRange = safeRange,
+            syncValue = syncValue,
         )
 
     Slider(

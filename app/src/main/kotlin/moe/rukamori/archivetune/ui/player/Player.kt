@@ -9,7 +9,6 @@
 
 package moe.rukamori.archivetune.ui.player
 
-import android.content.Context
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.SystemClock
@@ -356,6 +355,14 @@ fun BottomSheetPlayer(
     val currentFormat by playerConnection.currentFormat.collectAsState(initial = null)
     val queue by playerConnection.queue.collectAsState()
     val deviceMusicVolumeController = rememberDeviceMusicVolumeController()
+    val volumeProvider =
+        remember(deviceMusicVolumeController) {
+            { deviceMusicVolumeController.volumeFraction }
+        }
+    val isVolumeDraggingProvider =
+        remember(deviceMusicVolumeController) {
+            { deviceMusicVolumeController.isDragging }
+        }
     val onPlayerVolumeChange =
         remember(deviceMusicVolumeController) {
             { volume: Float ->
@@ -1420,8 +1427,8 @@ fun BottomSheetPlayer(
                         state = immersivePlayerState,
                         disableBlur = disableBlur,
                         backdropBlurAmount = backdropBlurAmount,
-                        volume = deviceMusicVolumeController.volumeFraction,
-                        isVolumeDragging = deviceMusicVolumeController.isDragging,
+                        volumeProvider = volumeProvider,
+                        isVolumeDraggingProvider = isVolumeDraggingProvider,
                         showVolumeBar = showPlayerVolumeBar,
                         showCodecOnPlayer = showCodecOnPlayer,
                         contentBottomPadding = queueCollapsedHeight,
@@ -1462,8 +1469,8 @@ fun BottomSheetPlayer(
                                 sliderPosition = sliderPosition,
                                 position = position,
                                 duration = duration,
-                                volume = deviceMusicVolumeController.volumeFraction,
-                                isVolumeDragging = deviceMusicVolumeController.isDragging,
+                                volumeProvider = volumeProvider,
+                                isVolumeDraggingProvider = isVolumeDraggingProvider,
                                 showVolumeBar = showPlayerVolumeBar,
                                 playerConnection = playerConnection,
                                 navController = navController,
@@ -1722,8 +1729,8 @@ fun BottomSheetPlayer(
                         state = immersivePlayerState,
                         disableBlur = disableBlur,
                         backdropBlurAmount = backdropBlurAmount,
-                        volume = deviceMusicVolumeController.volumeFraction,
-                        isVolumeDragging = deviceMusicVolumeController.isDragging,
+                        volumeProvider = volumeProvider,
+                        isVolumeDraggingProvider = isVolumeDraggingProvider,
                         showVolumeBar = showPlayerVolumeBar,
                         showCodecOnPlayer = showCodecOnPlayer,
                         contentBottomPadding = queueCollapsedHeight,
@@ -1764,8 +1771,8 @@ fun BottomSheetPlayer(
                                 sliderPosition = sliderPosition,
                                 position = position,
                                 duration = duration,
-                                volume = deviceMusicVolumeController.volumeFraction,
-                                isVolumeDragging = deviceMusicVolumeController.isDragging,
+                                volumeProvider = volumeProvider,
+                                isVolumeDraggingProvider = isVolumeDraggingProvider,
                                 showVolumeBar = showPlayerVolumeBar,
                                 playerConnection = playerConnection,
                                 navController = navController,

@@ -13,6 +13,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.database.ContentObserver
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -28,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
@@ -39,8 +41,8 @@ import kotlin.math.roundToInt
 private const val ACTION_VOLUME_CHANGED = "android.media.VOLUME_CHANGED_ACTION"
 private const val ACTION_STREAM_MUTE_CHANGED = "android.media.STREAM_MUTE_CHANGED_ACTION"
 private const val EXTRA_VOLUME_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE"
-private const val EXTRA_VOLUME_STREAM_VALUE = "android.media.EXTRA_VOLUME_STREAM_VALUE"
 private const val VOLUME_SETTLE_ANIMATION_MS = 160
+private const val UNAPPLIED_VOLUME_STEP = -1
 
 @Stable
 internal class DeviceMusicVolumeController(
@@ -48,51 +50,44 @@ internal class DeviceMusicVolumeController(
 ) {
     private var minVolume: Int = readMinVolume()
     private var maxVolume: Int = readMaxVolume(minVolume)
-    private var lastAppliedVolume: Int = readCurrentVolume(minVolume, maxVolume)
+    private var lastAppliedVolume: Int = UNAPPLIED_VOLUME_STEP
 
     var isDragging by mutableStateOf(false)
         private set
 
-    var volumeFraction by mutableFloatStateOf(
-        readEffectiveVolumeFraction(minVolume, maxVolume, lastAppliedVolume, checkMute = true),
-    )
+    var volumeFraction by mutableFloatStateOf(0f)
         private set
 
-    fun refresh(streamVolumeOverride: Int? = null) {
-        val newMin = readMinVolume()
-        val newMax = readMaxVolume(newMin)
-        minVolume = newMin
-        maxVolume = newMax
+    init {
+        refresh()
+    }
+
+    fun refresh() {
+        refreshBounds()
         if (isDragging) return
 
-        val currentVolume =
-            streamVolumeOverride?.coerceIn(newMin, newMax)
-                ?: readCurrentVolume(newMin, newMax)
+        val isMuted = runCatching { audioManager.isStreamMute(AudioManager.STREAM_MUSIC) }.getOrDefault(false)
+        if (isMuted) {
+            lastAppliedVolume = UNAPPLIED_VOLUME_STEP
+            volumeFraction = 0f
+            return
+        }
+
+        val currentVolume = readCurrentVolume(minVolume, maxVolume)
         lastAppliedVolume = currentVolume
-        volumeFraction =
-            readEffectiveVolumeFraction(
-                min = newMin,
-                max = newMax,
-                current = currentVolume,
-                checkMute = streamVolumeOverride == null,
-            )
+        val volumeRange = (maxVolume - minVolume).coerceAtLeast(1)
+        volumeFraction = ((currentVolume - minVolume).toFloat() / volumeRange.toFloat()).coerceIn(0f, 1f)
     }
 
     fun onVolumeChange(fraction: Float) {
         val safeFraction = fraction.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: volumeFraction
-        isDragging = true
-        volumeFraction = safeFraction
-
-        val volumeRange = (maxVolume - minVolume).coerceAtLeast(1)
-        val targetVolume =
-            (minVolume + (safeFraction * volumeRange).roundToInt())
-                .coerceIn(minVolume, maxVolume)
-        if (targetVolume != lastAppliedVolume) {
-            lastAppliedVolume = targetVolume
-            runCatching {
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetVolume, 0)
-            }
+        val wasDragging = isDragging
+        if (!wasDragging) {
+            refreshBounds()
+            isDragging = true
         }
+        volumeFraction = safeFraction
+        applyFractionStep(safeFraction)
     }
 
     fun onVolumeChangeFinished() {
@@ -104,30 +99,31 @@ internal class DeviceMusicVolumeController(
     @JvmName("setDeviceMusicVolumeFraction")
     fun setVolumeFraction(fraction: Float) {
         val safeFraction = fraction.takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: volumeFraction
+        refreshBounds()
+        isDragging = false
+        applyFractionStep(safeFraction)
+        refresh()
+    }
+
+    private fun applyFractionStep(safeFraction: Float) {
         val volumeRange = (maxVolume - minVolume).coerceAtLeast(1)
         val targetVolume =
             (minVolume + (safeFraction * volumeRange).roundToInt())
                 .coerceIn(minVolume, maxVolume)
         if (targetVolume != lastAppliedVolume) {
-            lastAppliedVolume = targetVolume
             runCatching {
                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetVolume, 0)
+            }.onSuccess {
+                lastAppliedVolume = targetVolume
             }
         }
-        refresh()
     }
 
-    private fun readEffectiveVolumeFraction(
-        min: Int,
-        max: Int,
-        current: Int,
-        checkMute: Boolean,
-    ): Float {
-        if (checkMute && runCatching { audioManager.isStreamMute(AudioManager.STREAM_MUSIC) }.getOrDefault(false)) {
-            return 0f
-        }
-        val volumeRange = (max - min).coerceAtLeast(1)
-        return ((current - min).toFloat() / volumeRange.toFloat()).coerceIn(0f, 1f)
+    private fun refreshBounds() {
+        val newMin = readMinVolume()
+        val newMax = readMaxVolume(newMin)
+        minVolume = newMin
+        maxVolume = newMax
     }
 
     private fun readCurrentVolume(
@@ -170,19 +166,10 @@ internal fun rememberDeviceMusicVolumeController(): DeviceMusicVolumeController 
                     intent: Intent?,
                 ) {
                     val action = intent?.action ?: return
+                    if (action != ACTION_VOLUME_CHANGED && action != ACTION_STREAM_MUTE_CHANGED) return
                     val streamType = intent.getIntExtra(EXTRA_VOLUME_STREAM_TYPE, -1)
                     if (streamType != -1 && streamType != AudioManager.STREAM_MUSIC) return
-
-                    when (action) {
-                        ACTION_VOLUME_CHANGED -> {
-                            val volumeValue = intent.getIntExtra(EXTRA_VOLUME_STREAM_VALUE, -1)
-                            controller.refresh(streamVolumeOverride = volumeValue.takeIf { it >= 0 })
-                        }
-
-                        ACTION_STREAM_MUTE_CHANGED -> {
-                            controller.refresh()
-                        }
-                    }
+                    controller.refresh()
                 }
             }
         val receiverFilter =
@@ -204,6 +191,20 @@ internal fun rememberDeviceMusicVolumeController(): DeviceMusicVolumeController 
         val observer =
             object : ContentObserver(Handler(Looper.getMainLooper())) {
                 override fun onChange(selfChange: Boolean) {
+                    onChange(selfChange, null)
+                }
+
+                override fun onChange(
+                    selfChange: Boolean,
+                    uri: Uri?,
+                ) {
+                    if (
+                        uri != null &&
+                        uri != Settings.System.CONTENT_URI &&
+                        !uri.lastPathSegment.orEmpty().contains("volume", ignoreCase = true)
+                    ) {
+                        return
+                    }
                     controller.refresh()
                 }
             }
@@ -243,9 +244,11 @@ internal fun rememberDeviceMusicVolumeController(): DeviceMusicVolumeController 
 internal fun rememberSmoothVolumeFraction(
     volume: Float,
     isDragging: Boolean,
+    onDispose: (() -> Unit)? = null,
 ): Float {
+    val safeVolume = volume.coerceIn(0f, 1f)
     val animatedVolume by animateFloatAsState(
-        targetValue = volume.coerceIn(0f, 1f),
+        targetValue = safeVolume,
         animationSpec =
             if (isDragging) {
                 snap()
@@ -257,5 +260,11 @@ internal fun rememberSmoothVolumeFraction(
             },
         label = "deviceMusicVolume",
     )
-    return animatedVolume
+    if (onDispose != null) {
+        val currentOnDispose by rememberUpdatedState(onDispose)
+        DisposableEffect(Unit) {
+            onDispose { currentOnDispose() }
+        }
+    }
+    return if (isDragging) safeVolume else animatedVolume
 }

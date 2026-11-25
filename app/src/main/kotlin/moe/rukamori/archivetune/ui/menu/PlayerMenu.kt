@@ -146,6 +146,14 @@ fun PlayerMenu(
     val database = LocalDatabase.current
     val playerConnection = LocalPlayerConnection.current ?: return
     val deviceMusicVolumeController = rememberDeviceMusicVolumeController()
+    val volumeProvider =
+        remember(deviceMusicVolumeController) {
+            { deviceMusicVolumeController.volumeFraction }
+        }
+    val isVolumeDraggingProvider =
+        remember(deviceMusicVolumeController) {
+            { deviceMusicVolumeController.isDragging }
+        }
     val onPlayerVolumeChange =
         remember(deviceMusicVolumeController) {
             { volume: Float -> deviceMusicVolumeController.onVolumeChange(volume) }
@@ -516,8 +524,8 @@ fun PlayerMenu(
         leadingContent = {
             if (isQueueTrigger != true) {
                 PlayerVolumeCard(
-                    volume = deviceMusicVolumeController.volumeFraction,
-                    isVolumeDragging = deviceMusicVolumeController.isDragging,
+                    volumeProvider = volumeProvider,
+                    isVolumeDraggingProvider = isVolumeDraggingProvider,
                     onVolumeChange = onPlayerVolumeChange,
                     onVolumeChangeFinished = onPlayerVolumeChangeFinished,
                 )
@@ -674,16 +682,18 @@ fun PlayerMenu(
 
 @Composable
 private fun PlayerVolumeCard(
-    volume: Float,
-    isVolumeDragging: Boolean,
+    volumeProvider: () -> Float,
+    isVolumeDraggingProvider: () -> Boolean,
     onVolumeChange: (Float) -> Unit,
     onVolumeChangeFinished: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val isVolumeDragging = isVolumeDraggingProvider()
     val displayVolume =
         rememberSmoothVolumeFraction(
-            volume = volume,
+            volume = volumeProvider(),
             isDragging = isVolumeDragging,
+            onDispose = onVolumeChangeFinished,
         )
     val isMuted = displayVolume <= 0f
 
@@ -726,6 +736,7 @@ private fun PlayerVolumeCard(
                 value = displayVolume,
                 onValueChange = onVolumeChange,
                 onValueChangeFinished = onVolumeChangeFinished,
+                syncValue = !isVolumeDragging,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -739,12 +750,14 @@ private fun VolumeSliderL(
     onValueChange: (Float) -> Unit,
     onValueChangeFinished: () -> Unit,
     modifier: Modifier = Modifier,
+    syncValue: Boolean = true,
 ) {
     val volumeLabel = stringResource(R.string.volume)
     val sliderState =
         rememberControlledSliderState(
             value = value.coerceIn(0f, 1f),
             valueRange = 0f..1f,
+            syncValue = syncValue,
         )
 
     Slider(
