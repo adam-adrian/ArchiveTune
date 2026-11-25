@@ -47,7 +47,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -108,6 +107,7 @@ import moe.rukamori.archivetune.ui.component.menuEntrance
 import moe.rukamori.archivetune.ui.component.rememberControlledSliderState
 import moe.rukamori.archivetune.ui.component.toMenuAction
 import moe.rukamori.archivetune.ui.player.rememberDeviceMusicVolumeController
+import moe.rukamori.archivetune.ui.player.rememberSmoothVolumeFraction
 import moe.rukamori.archivetune.ui.utils.navigateToAlbum
 import moe.rukamori.archivetune.ui.utils.navigateToArtist
 import moe.rukamori.archivetune.utils.ExternalDownloaderLaunchResult
@@ -148,7 +148,11 @@ fun PlayerMenu(
     val deviceMusicVolumeController = rememberDeviceMusicVolumeController()
     val onPlayerVolumeChange =
         remember(deviceMusicVolumeController) {
-            { volume: Float -> deviceMusicVolumeController.setVolumeFraction(volume) }
+            { volume: Float -> deviceMusicVolumeController.onVolumeChange(volume) }
+        }
+    val onPlayerVolumeChangeFinished =
+        remember(deviceMusicVolumeController) {
+            { deviceMusicVolumeController.onVolumeChangeFinished() }
         }
     val activityResultLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
@@ -513,7 +517,9 @@ fun PlayerMenu(
             if (isQueueTrigger != true) {
                 PlayerVolumeCard(
                     volume = deviceMusicVolumeController.volumeFraction,
+                    isVolumeDragging = deviceMusicVolumeController.isDragging,
                     onVolumeChange = onPlayerVolumeChange,
+                    onVolumeChangeFinished = onPlayerVolumeChangeFinished,
                 )
             }
             MenuQuickActions(actions = quickActions)
@@ -669,11 +675,17 @@ fun PlayerMenu(
 @Composable
 private fun PlayerVolumeCard(
     volume: Float,
+    isVolumeDragging: Boolean,
     onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val safeVolume = volume.coerceIn(0f, 1f)
-    val isMuted = safeVolume <= 0f
+    val displayVolume =
+        rememberSmoothVolumeFraction(
+            volume = volume,
+            isDragging = isVolumeDragging,
+        )
+    val isMuted = displayVolume <= 0f
 
     Surface(
         shape = MaterialTheme.shapes.extraLarge,
@@ -704,15 +716,16 @@ private fun PlayerVolumeCard(
                 )
 
                 Text(
-                    text = "${(safeVolume * 100).roundToInt()}%",
+                    text = "${(displayVolume * 100).roundToInt()}%",
                     style = MaterialTheme.typography.titleMediumEmphasized,
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
 
             VolumeSliderL(
-                value = safeVolume,
+                value = displayVolume,
                 onValueChange = onVolumeChange,
+                onValueChangeFinished = onVolumeChangeFinished,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -724,32 +737,24 @@ private fun PlayerVolumeCard(
 private fun VolumeSliderL(
     value: Float,
     onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val safeValue = value.coerceIn(0f, 1f)
-    var sliderValue by remember { mutableFloatStateOf(safeValue) }
-    var isDragging by remember { mutableStateOf(false) }
     val volumeLabel = stringResource(R.string.volume)
-
-    LaunchedEffect(safeValue) {
-        if (!isDragging) sliderValue = safeValue
-    }
     val sliderState =
         rememberControlledSliderState(
-            value = sliderValue,
+            value = value.coerceIn(0f, 1f),
             valueRange = 0f..1f,
         )
 
     Slider(
         state = sliderState,
         onValueChange = { updated ->
-            isDragging = true
             val coerced = updated.coerceIn(0f, 1f)
             sliderState.value = coerced
-            sliderValue = coerced
             onValueChange(coerced)
         },
-        onValueChangeFinished = { isDragging = false },
+        onValueChangeFinished = onValueChangeFinished,
         modifier = modifier.semantics { contentDescription = volumeLabel },
         colors =
             SliderDefaults.colors(

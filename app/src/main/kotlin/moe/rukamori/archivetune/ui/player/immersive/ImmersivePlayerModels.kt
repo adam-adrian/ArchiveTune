@@ -43,7 +43,6 @@ data class ImmersivePlayerUiModel(
     val canvasFrame: ImageBitmap? = null,
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
-    val volume: Float = 0f,
     val seekPositionMs: Long? = null,
     val showArtistDialog: Boolean = false,
 )
@@ -65,7 +64,6 @@ sealed interface ImmersivePlayerAction {
     data object SkipNext : ImmersivePlayerAction
     data class PreviewSeek(val positionMs: Long) : ImmersivePlayerAction
     data object CommitSeek : ImmersivePlayerAction
-    data class ChangeVolume(val fraction: Float) : ImmersivePlayerAction
     data object ToggleLike : ImmersivePlayerAction
     data object OpenAlbum : ImmersivePlayerAction
     data object OpenArtists : ImmersivePlayerAction

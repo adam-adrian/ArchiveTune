@@ -96,7 +96,9 @@ import moe.rukamori.archivetune.canvas.CanvasVideo
 import moe.rukamori.archivetune.ui.player.LandscapePlayerControls
 import moe.rukamori.archivetune.ui.player.CanvasArtworkPlayer
 import moe.rukamori.archivetune.ui.player.rememberOfflineArtworkImageRequest
+import moe.rukamori.archivetune.ui.player.rememberSmoothVolumeFraction
 import moe.rukamori.archivetune.utils.makeTimeString
+import kotlin.math.roundToLong
 
 private val ImmersiveContentColor = Color.White
 private val ImmersiveSecondaryContentColor = Color.White.copy(alpha = 0.7f)
@@ -107,9 +109,13 @@ fun ImmersivePlayerScreen(
     state: ImmersivePlayerScreenState,
     disableBlur: Boolean,
     backdropBlurAmount: Int,
+    volume: Float,
+    isVolumeDragging: Boolean,
     showVolumeBar: Boolean,
     showCodecOnPlayer: Boolean,
     contentBottomPadding: Dp,
+    onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit,
     onAction: (ImmersivePlayerAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -121,9 +127,13 @@ fun ImmersivePlayerScreen(
                 model = state.model,
                 disableBlur = disableBlur,
                 backdropBlurAmount = backdropBlurAmount,
+                volume = volume,
+                isVolumeDragging = isVolumeDragging,
                 showVolumeBar = showVolumeBar,
                 showCodecOnPlayer = showCodecOnPlayer,
                 contentBottomPadding = contentBottomPadding,
+                onVolumeChange = onVolumeChange,
+                onVolumeChangeFinished = onVolumeChangeFinished,
                 onAction = onAction,
                 modifier = modifier,
             )
@@ -134,9 +144,13 @@ fun ImmersivePlayerScreen(
                     model = model,
                     disableBlur = disableBlur,
                     backdropBlurAmount = backdropBlurAmount,
+                    volume = volume,
+                    isVolumeDragging = isVolumeDragging,
                     showVolumeBar = showVolumeBar,
                     showCodecOnPlayer = showCodecOnPlayer,
                     contentBottomPadding = contentBottomPadding,
+                    onVolumeChange = onVolumeChange,
+                    onVolumeChangeFinished = onVolumeChangeFinished,
                     onAction = onAction,
                     modifier = modifier,
                 )
@@ -160,9 +174,13 @@ private fun ImmersivePlayerContent(
     model: ImmersivePlayerUiModel,
     disableBlur: Boolean,
     backdropBlurAmount: Int,
+    volume: Float,
+    isVolumeDragging: Boolean,
     showVolumeBar: Boolean,
     showCodecOnPlayer: Boolean,
     contentBottomPadding: Dp,
+    onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit,
     onAction: (ImmersivePlayerAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -191,9 +209,13 @@ private fun ImmersivePlayerContent(
                 model = model,
                 disableBlur = disableBlur,
                 backdropBlurAmount = backdropBlurAmount,
+                volume = volume,
+                isVolumeDragging = isVolumeDragging,
                 showVolumeBar = showVolumeBar,
                 showCodecOnPlayer = showCodecOnPlayer,
                 contentBottomPadding = contentBottomPadding,
+                onVolumeChange = onVolumeChange,
+                onVolumeChangeFinished = onVolumeChangeFinished,
                 onAction = onAction,
             )
         } else {
@@ -201,9 +223,13 @@ private fun ImmersivePlayerContent(
                 model = model,
                 disableBlur = disableBlur,
                 backdropBlurAmount = backdropBlurAmount,
+                volume = volume,
+                isVolumeDragging = isVolumeDragging,
                 showVolumeBar = showVolumeBar,
                 showCodecOnPlayer = showCodecOnPlayer,
                 contentBottomPadding = contentBottomPadding,
+                onVolumeChange = onVolumeChange,
+                onVolumeChangeFinished = onVolumeChangeFinished,
                 onAction = onAction,
             )
         }
@@ -215,9 +241,13 @@ private fun ImmersivePortrait(
     model: ImmersivePlayerUiModel,
     disableBlur: Boolean,
     backdropBlurAmount: Int,
+    volume: Float,
+    isVolumeDragging: Boolean,
     showVolumeBar: Boolean,
     showCodecOnPlayer: Boolean,
     contentBottomPadding: Dp,
+    onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit,
     onAction: (ImmersivePlayerAction) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -288,7 +318,12 @@ private fun ImmersivePortrait(
             )
             Spacer(modifier = Modifier.weight(1f))
             if (showVolumeBar) {
-                VolumeControls(volume = model.volume, onAction = onAction)
+                VolumeControls(
+                    volume = volume,
+                    isVolumeDragging = isVolumeDragging,
+                    onVolumeChange = onVolumeChange,
+                    onVolumeChangeFinished = onVolumeChangeFinished,
+                )
             }
             Spacer(modifier = Modifier.height(32.dp))
         }
@@ -300,9 +335,13 @@ private fun ImmersiveLandscape(
     model: ImmersivePlayerUiModel,
     disableBlur: Boolean,
     backdropBlurAmount: Int,
+    volume: Float,
+    isVolumeDragging: Boolean,
     showVolumeBar: Boolean,
     showCodecOnPlayer: Boolean,
     contentBottomPadding: Dp,
+    onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit,
     onAction: (ImmersivePlayerAction) -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -365,7 +404,12 @@ private fun ImmersiveLandscape(
             )
             if (showVolumeBar) {
                 Spacer(modifier = Modifier.height(4.dp))
-                VolumeControls(volume = model.volume, onAction = onAction)
+                VolumeControls(
+                    volume = volume,
+                    isVolumeDragging = isVolumeDragging,
+                    onVolumeChange = onVolumeChange,
+                    onVolumeChangeFinished = onVolumeChangeFinished,
+                )
             }
             ProgressSection(
                 model = model,
@@ -757,8 +801,15 @@ private fun TransportControls(
 @Composable
 private fun VolumeControls(
     volume: Float,
-    onAction: (ImmersivePlayerAction) -> Unit,
+    isVolumeDragging: Boolean,
+    onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit,
 ) {
+    val displayVolume =
+        rememberSmoothVolumeFraction(
+            volume = volume,
+            isDragging = isVolumeDragging,
+        )
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
             painter = painterResource(R.drawable.volume_off),
@@ -767,11 +818,11 @@ private fun VolumeControls(
             modifier = Modifier.size(20.dp),
         )
         ThinProgressSlider(
-            value = (volume.coerceIn(0f, 1f) * 1000).toLong(),
+            value = (displayVolume * 1000f).roundToLong(),
             valueRange = remember { 0L..1000L },
             accessibilityLabel = stringResource(R.string.volume),
-            onValueChange = { onAction(ImmersivePlayerAction.ChangeVolume(it / 1000f)) },
-            onValueChangeFinished = {},
+            onValueChange = { onVolumeChange(it / 1000f) },
+            onValueChangeFinished = onVolumeChangeFinished,
             modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
         )
         Icon(
@@ -806,7 +857,8 @@ private fun ThinProgressSlider(
                 .pointerInput(valueRange) {
                     detectTapGestures(
                         onTap = { offset ->
-                            val selected = (valueRange.first + span * (offset.x / size.width).coerceIn(0f, 1f)).toLong()
+                            if (size.width <= 0) return@detectTapGestures
+                            val selected = valueRange.first + (span * (offset.x / size.width).coerceIn(0f, 1f)).roundToLong()
                             currentOnValueChange(selected)
                             currentOnValueChangeFinished()
                         },
@@ -814,7 +866,8 @@ private fun ThinProgressSlider(
                 }.pointerInput(valueRange) {
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { change, _ ->
-                            val selected = (valueRange.first + span * (change.position.x / size.width).coerceIn(0f, 1f)).toLong()
+                            if (size.width <= 0) return@detectHorizontalDragGestures
+                            val selected = valueRange.first + (span * (change.position.x / size.width).coerceIn(0f, 1f)).roundToLong()
                             currentOnValueChange(selected)
                         },
                         onDragEnd = { currentOnValueChangeFinished() },

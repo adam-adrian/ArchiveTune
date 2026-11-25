@@ -7,11 +7,7 @@
 
 package moe.rukamori.archivetune.playback
 
-import android.content.Context
-import android.media.AudioManager
-import android.os.Build
 import androidx.media3.common.C
-import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.scopes.ViewModelScoped
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.currentCoroutineContext
@@ -29,7 +25,6 @@ import moe.rukamori.archivetune.extensions.togglePlayPause
 import moe.rukamori.archivetune.models.ActiveOutputDevice
 import moe.rukamori.archivetune.models.MediaMetadata
 import javax.inject.Inject
-import kotlin.math.roundToInt
 
 data class ImmersivePlayerData(
     val metadata: MediaMetadata,
@@ -47,16 +42,12 @@ data class ImmersivePlayerData(
 data class ImmersivePlaybackProgress(
     val positionMs: Long,
     val durationMs: Long,
-    val volume: Float,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @ViewModelScoped
-class ImmersivePlayerRepository @Inject constructor(
-    @ApplicationContext context: Context,
-) {
+class ImmersivePlayerRepository @Inject constructor() {
     private val connection = MutableStateFlow<PlayerConnection?>(null)
-    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     fun attach(playerConnection: PlayerConnection) {
         connection.value = playerConnection
@@ -114,7 +105,7 @@ class ImmersivePlayerRepository @Inject constructor(
     fun observeProgress(): Flow<ImmersivePlaybackProgress> =
         connection.flatMapLatest { playerConnection ->
             if (playerConnection == null) {
-                flowOf(ImmersivePlaybackProgress(0L, 0L, readVolumeFraction()))
+                flowOf(ImmersivePlaybackProgress(0L, 0L))
             } else {
                 flow {
                     while (currentCoroutineContext().isActive) {
@@ -124,7 +115,6 @@ class ImmersivePlayerRepository @Inject constructor(
                             ImmersivePlaybackProgress(
                                 positionMs = player.currentPosition.coerceAtLeast(0L),
                                 durationMs = duration,
-                                volume = readVolumeFraction(),
                             ),
                         )
                         delay(250L)
@@ -152,28 +142,6 @@ class ImmersivePlayerRepository @Inject constructor(
     fun toggleLike() {
         connection.value?.toggleLike()
     }
-
-    fun setVolume(fraction: Float) {
-        val minVolume = readMinVolume()
-        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(minVolume + 1)
-        val safeFraction = fraction.takeIf(Float::isFinite)?.coerceIn(0f, 1f) ?: return
-        val volume = (minVolume + ((maxVolume - minVolume) * safeFraction).roundToInt()).coerceIn(minVolume, maxVolume)
-        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
-    }
-
-    private fun readVolumeFraction(): Float {
-        val minVolume = readMinVolume()
-        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(minVolume + 1)
-        val volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        return ((volume - minVolume).toFloat() / (maxVolume - minVolume).toFloat()).coerceIn(0f, 1f)
-    }
-
-    private fun readMinVolume(): Int =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            audioManager.getStreamMinVolume(AudioManager.STREAM_MUSIC)
-        } else {
-            0
-        }
 
     private data class TransportData(
         val playbackState: Int,

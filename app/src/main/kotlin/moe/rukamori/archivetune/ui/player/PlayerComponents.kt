@@ -2030,6 +2030,7 @@ fun V8PlayerControlsContent(
     position: Long,
     duration: Long,
     volume: Float,
+    isVolumeDragging: Boolean = false,
     showVolumeBar: Boolean,
     currentFormat: FormatEntity?,
     playerConnection: PlayerConnection,
@@ -2040,6 +2041,7 @@ fun V8PlayerControlsContent(
     onSliderValueChange: (Long) -> Unit,
     onSliderValueChangeFinished: () -> Unit,
     onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit = {},
     modifier: Modifier = Modifier,
     landscape: Boolean = false,
 ) {
@@ -2171,9 +2173,11 @@ fun V8PlayerControlsContent(
 
                 V8VolumeControls(
                     volume = volume,
+                    isVolumeDragging = isVolumeDragging,
                     foreground = foreground,
                     secondaryForeground = secondaryForeground,
                     onVolumeChange = onVolumeChange,
+                    onVolumeChangeFinished = onVolumeChangeFinished,
                 )
             }
         }
@@ -2194,6 +2198,7 @@ fun V8PlayerContent(
     position: Long,
     duration: Long,
     volume: Float,
+    isVolumeDragging: Boolean = false,
     showVolumeBar: Boolean,
     playerConnection: PlayerConnection,
     navController: NavController,
@@ -2207,6 +2212,7 @@ fun V8PlayerContent(
     onSliderValueChange: (Long) -> Unit,
     onSliderValueChangeFinished: () -> Unit,
     onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit = {},
     modifier: Modifier = Modifier,
     landscape: Boolean = false,
 ) {
@@ -2261,6 +2267,7 @@ fun V8PlayerContent(
             position = position,
             duration = duration,
             volume = volume,
+            isVolumeDragging = isVolumeDragging,
             showVolumeBar = showVolumeBar,
             currentFormat = currentFormat,
             foreground = foreground,
@@ -2282,6 +2289,7 @@ fun V8PlayerContent(
             onSliderValueChange = onSliderValueChange,
             onSliderValueChangeFinished = onSliderValueChangeFinished,
             onVolumeChange = onVolumeChange,
+            onVolumeChangeFinished = onVolumeChangeFinished,
             modifier = modifier,
         )
     } else {
@@ -2303,6 +2311,7 @@ fun V8PlayerContent(
             position = position,
             duration = duration,
             volume = volume,
+            isVolumeDragging = isVolumeDragging,
             showVolumeBar = showVolumeBar,
             currentFormat = currentFormat,
             foreground = foreground,
@@ -2324,6 +2333,7 @@ fun V8PlayerContent(
             onSliderValueChange = onSliderValueChange,
             onSliderValueChangeFinished = onSliderValueChangeFinished,
             onVolumeChange = onVolumeChange,
+            onVolumeChangeFinished = onVolumeChangeFinished,
             modifier = modifier,
         )
     }
@@ -2348,6 +2358,7 @@ private fun V8PortraitContent(
     position: Long,
     duration: Long,
     volume: Float,
+    isVolumeDragging: Boolean,
     showVolumeBar: Boolean,
     currentFormat: FormatEntity?,
     foreground: Color,
@@ -2360,6 +2371,7 @@ private fun V8PortraitContent(
     onSliderValueChange: (Long) -> Unit,
     onSliderValueChangeFinished: () -> Unit,
     onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit,
     onTitleClick: () -> Unit,
     onArtistClick: (artistId: String) -> Unit,
     modifier: Modifier = Modifier,
@@ -2484,9 +2496,11 @@ private fun V8PortraitContent(
 
                 V8VolumeControls(
                     volume = volume,
+                    isVolumeDragging = isVolumeDragging,
                     foreground = foreground,
                     secondaryForeground = secondaryForeground,
                     onVolumeChange = onVolumeChange,
+                    onVolumeChangeFinished = onVolumeChangeFinished,
                 )
             }
 
@@ -2514,6 +2528,7 @@ private fun V8LandscapeContent(
     position: Long,
     duration: Long,
     volume: Float,
+    isVolumeDragging: Boolean,
     showVolumeBar: Boolean,
     currentFormat: FormatEntity?,
     foreground: Color,
@@ -2526,6 +2541,7 @@ private fun V8LandscapeContent(
     onSliderValueChange: (Long) -> Unit,
     onSliderValueChangeFinished: () -> Unit,
     onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit,
     onTitleClick: () -> Unit,
     onArtistClick: (artistId: String) -> Unit,
     modifier: Modifier = Modifier,
@@ -2599,9 +2615,11 @@ private fun V8LandscapeContent(
 
                     V8VolumeControls(
                         volume = volume,
+                        isVolumeDragging = isVolumeDragging,
                         foreground = foreground,
                         secondaryForeground = secondaryForeground,
                         onVolumeChange = onVolumeChange,
+                        onVolumeChangeFinished = onVolumeChangeFinished,
                     )
                 }
                 V8PlaybackProgress(
@@ -3017,10 +3035,17 @@ private fun V8TransportButton(
 @Composable
 private fun V8VolumeControls(
     volume: Float,
+    isVolumeDragging: Boolean,
     foreground: Color,
     secondaryForeground: Color,
     onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit,
 ) {
+    val displayVolume =
+        rememberSmoothVolumeFraction(
+            volume = volume,
+            isDragging = isVolumeDragging,
+        )
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -3032,13 +3057,13 @@ private fun V8VolumeControls(
             modifier = Modifier.size(22.dp),
         )
         V8FlatSlider(
-            value = volume.coerceIn(0f, 1f),
+            value = displayVolume,
             valueRange = 0f..1f,
             activeColor = foreground.copy(alpha = 0.86f),
             inactiveColor = foreground.copy(alpha = 0.24f),
             trackHeight = 8.dp,
             onValueChange = { onVolumeChange(it.coerceIn(0f, 1f)) },
-            onValueChangeFinished = {},
+            onValueChangeFinished = onVolumeChangeFinished,
             modifier =
                 Modifier
                     .weight(1f)

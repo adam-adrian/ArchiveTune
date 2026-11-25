@@ -98,7 +98,6 @@ class ImmersivePlayerViewModel @Inject constructor(
                     model.copy(
                         positionMs = model.seekPositionMs ?: progress.positionMs,
                         durationMs = progress.durationMs.takeIf { it > 0L } ?: model.durationMs,
-                        volume = progress.volume,
                     )
                 mutableState.value =
                     if (current is ImmersivePlayerScreenState.Error) {
@@ -136,7 +135,6 @@ class ImmersivePlayerViewModel @Inject constructor(
                 repository.seekTo(target)
                 updateModel { it.copy(positionMs = target, seekPositionMs = null) }
             }
-            is ImmersivePlayerAction.ChangeVolume -> repository.setVolume(action.fraction)
             ImmersivePlayerAction.ToggleLike -> repository.toggleLike()
             ImmersivePlayerAction.OpenAlbum -> {
                 currentModel()?.albumId?.let { eventChannel.trySend(ImmersivePlayerEvent.OpenAlbum(it)) }
@@ -169,7 +167,6 @@ class ImmersivePlayerViewModel @Inject constructor(
                 mapped.copy(
                     positionMs = old.positionMs,
                     durationMs = old.durationMs,
-                    volume = old.volume,
                     seekPositionMs = old.seekPositionMs,
                     showArtistDialog = old.showArtistDialog && old.artists == mapped.artists,
                     canvasFrame = old.canvasFrame.takeIf { old.canvas == mapped.canvas },

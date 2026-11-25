@@ -222,7 +222,13 @@ fun LyricsScreen(
     val onVolumeChange =
         remember(deviceMusicVolumeController) {
             { volume: Float ->
-                deviceMusicVolumeController.setVolumeFraction(volume)
+                deviceMusicVolumeController.onVolumeChange(volume)
+            }
+        }
+    val onVolumeChangeFinished =
+        remember(deviceMusicVolumeController) {
+            {
+                deviceMusicVolumeController.onVolumeChangeFinished()
             }
         }
     val currentLyrics by playerConnection.currentLyrics.collectAsStateWithLifecycle(initialValue = null)
@@ -586,6 +592,7 @@ fun LyricsScreen(
                                 isPlaying = isPlaying,
                                 isLoading = isLoading,
                                 volume = deviceMusicVolumeController.volumeFraction,
+                                isVolumeDragging = deviceMusicVolumeController.isDragging,
                                 onPositionChange = { sliderPosition = it },
                                 onPositionChangeFinished = {
                                     sliderPosition?.let {
@@ -595,6 +602,7 @@ fun LyricsScreen(
                                     sliderPosition = null
                                 },
                                 onVolumeChange = onVolumeChange,
+                                onVolumeChangeFinished = onVolumeChangeFinished,
                                 onPreviousClick = {
                                     hapticClick()
                                     playerConnection.seekToPrevious()
@@ -661,6 +669,7 @@ fun LyricsScreen(
                         isPlaying = isPlaying,
                         isLoading = isLoading,
                         volume = deviceMusicVolumeController.volumeFraction,
+                        isVolumeDragging = deviceMusicVolumeController.isDragging,
                         onPositionChange = { sliderPosition = it },
                         onPositionChangeFinished = {
                             sliderPosition?.let {
@@ -670,6 +679,7 @@ fun LyricsScreen(
                             sliderPosition = null
                         },
                         onVolumeChange = onVolumeChange,
+                        onVolumeChangeFinished = onVolumeChangeFinished,
                         onPreviousClick = {
                             hapticClick()
                             playerConnection.seekToPrevious()
@@ -1038,9 +1048,11 @@ private fun AppleMusicControls(
     isPlaying: Boolean,
     isLoading: Boolean,
     volume: Float,
+    isVolumeDragging: Boolean,
     onPositionChange: (Long) -> Unit,
     onPositionChangeFinished: () -> Unit,
     onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit,
     onPreviousClick: () -> Unit,
     onPlayPauseClick: () -> Unit,
     onNextClick: () -> Unit,
@@ -1190,13 +1202,18 @@ private fun AppleMusicControls(
                 tint = foregroundColor.copy(alpha = 0.66f),
                 modifier = Modifier.size(17.dp),
             )
+            val displayVolume =
+                rememberSmoothVolumeFraction(
+                    volume = volume,
+                    isDragging = isVolumeDragging,
+                )
             AppleMusicSlider(
-                value = volume.coerceIn(0f, 1f),
+                value = displayVolume,
                 valueRange = 0f..1f,
                 activeColor = foregroundColor.copy(alpha = 0.88f),
                 inactiveColor = foregroundColor.copy(alpha = 0.24f),
                 onValueChange = onVolumeChange,
-                onValueChangeFinished = {},
+                onValueChangeFinished = onVolumeChangeFinished,
                 modifier =
                     Modifier
                         .weight(1f)
