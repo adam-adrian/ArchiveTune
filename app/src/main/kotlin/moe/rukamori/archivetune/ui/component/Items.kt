@@ -160,7 +160,6 @@ private val GridArtworkShape = RoundedCornerShape(GridThumbnailCornerRadius)
 private val ListArtworkShape = RoundedCornerShape(ThumbnailCornerRadius)
 private val ActiveListItemShape = RoundedCornerShape(20.dp)
 private val GridArtworkElevation = 10.dp
-private val ListArtworkElevation = 4.dp
 private val GridArtistHaloWidth = 3.dp
 private val ListArtistHaloWidth = 2.dp
 private const val ArtworkAmbientShadowAlpha = 0.28f
@@ -287,7 +286,6 @@ fun ListItem(
     trailingContent: @Composable RowScope.() -> Unit = {},
     isActive: Boolean = false,
     showActiveContainer: Boolean = true,
-    thumbnailShape: Shape? = null,
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val effectsSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Color>()
@@ -326,16 +324,7 @@ fun ListItem(
     ) {
         Box(
             contentAlignment = Alignment.Center,
-            modifier =
-                Modifier
-                    .padding(8.dp)
-                    .then(
-                        if (thumbnailShape != null) {
-                            Modifier.artworkLift(thumbnailShape, ListArtworkElevation, colorScheme.primary)
-                        } else {
-                            Modifier
-                        },
-                    ),
+            modifier = Modifier.padding(8.dp),
         ) { thumbnailContent() }
         Column(
             modifier =
@@ -377,13 +366,11 @@ fun ListItem(
     trailingContent: @Composable RowScope.() -> Unit = {},
     isActive: Boolean = false,
     showActiveContainer: Boolean = true,
-    thumbnailShape: Shape? = null,
 ) = ListItem(
     title = title,
     modifier = modifier,
     isActive = isActive,
     showActiveContainer = showActiveContainer,
-    thumbnailShape = thumbnailShape,
     subtitle = {
         badges()
         if (!subtitle.isNullOrEmpty()) {
@@ -626,7 +613,6 @@ fun SongListItem(
             modifier = modifier,
             isActive = isActive,
             showActiveContainer = showActiveContainer,
-            thumbnailShape = if (albumIndex != null) null else ListArtworkShape,
         )
     }
 
@@ -844,7 +830,6 @@ fun AlbumListItem(
     trailingContent = trailingContent,
     modifier = modifier,
     isActive = isActive,
-    thumbnailShape = ListArtworkShape,
 )
 
 @Composable
@@ -989,7 +974,6 @@ fun PlaylistListItem(
     },
     trailingContent = trailingContent,
     modifier = modifier,
-    thumbnailShape = ListArtworkShape,
 )
 
 @Composable
@@ -1495,7 +1479,6 @@ fun MediaMetadataListItem(
         trailingContent = trailingContent,
         modifier = modifier,
         isActive = isActive,
-        thumbnailShape = ListArtworkShape,
     )
 }
 
@@ -1602,7 +1585,6 @@ fun YouTubeListItem(
             modifier = modifier,
             isActive = isActive,
             showActiveContainer = showActiveContainer,
-            thumbnailShape = if (item is ArtistItem || albumIndex != null) null else ListArtworkShape,
         )
     }
 
