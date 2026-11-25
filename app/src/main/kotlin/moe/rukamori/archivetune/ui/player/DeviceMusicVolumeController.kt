@@ -12,12 +12,15 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.database.ContentObserver
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.ViewTreeObserver
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -32,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -147,6 +151,7 @@ internal class DeviceMusicVolumeController(
 @Composable
 internal fun rememberDeviceMusicVolumeController(): DeviceMusicVolumeController {
     val context = LocalContext.current
+    val view = LocalView.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val appContext = remember(context) { context.applicationContext }
     val audioManager =
@@ -158,7 +163,8 @@ internal fun rememberDeviceMusicVolumeController(): DeviceMusicVolumeController 
             DeviceMusicVolumeController(audioManager)
         }
 
-    DisposableEffect(appContext, controller, lifecycleOwner) {
+    DisposableEffect(appContext, audioManager, view, controller, lifecycleOwner) {
+        val mainHandler = Handler(Looper.getMainLooper())
         val volumeReceiver =
             object : BroadcastReceiver() {
                 override fun onReceive(
@@ -188,8 +194,24 @@ internal fun rememberDeviceMusicVolumeController(): DeviceMusicVolumeController 
                 true
             }.getOrDefault(false)
 
+        val audioDeviceCallback =
+            object : AudioDeviceCallback() {
+                override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) {
+                    if (addedDevices.any { it.isSink }) controller.refresh()
+                }
+
+                override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) {
+                    if (removedDevices.any { it.isSink }) controller.refresh()
+                }
+            }
+        val audioDeviceCallbackRegistered =
+            runCatching {
+                audioManager.registerAudioDeviceCallback(audioDeviceCallback, mainHandler)
+                true
+            }.getOrDefault(false)
+
         val observer =
-            object : ContentObserver(Handler(Looper.getMainLooper())) {
+            object : ContentObserver(mainHandler) {
                 override fun onChange(selfChange: Boolean) {
                     onChange(selfChange, null)
                 }
@@ -215,6 +237,23 @@ internal fun rememberDeviceMusicVolumeController(): DeviceMusicVolumeController 
                 true
             }.getOrDefault(false)
 
+        val windowFocusListener =
+            ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
+                if (hasFocus) {
+                    controller.refresh()
+                } else {
+                    controller.onVolumeChangeFinished()
+                }
+            }
+        val viewTreeObserver = view.viewTreeObserver
+        val windowFocusRegistered =
+            if (viewTreeObserver.isAlive) {
+                viewTreeObserver.addOnWindowFocusChangeListener(windowFocusListener)
+                true
+            } else {
+                false
+            }
+
         val lifecycleObserver =
             LifecycleEventObserver { _, event ->
                 when (event) {
@@ -228,6 +267,15 @@ internal fun rememberDeviceMusicVolumeController(): DeviceMusicVolumeController 
 
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
+            if (windowFocusRegistered) {
+                val activeObserver = if (viewTreeObserver.isAlive) viewTreeObserver else view.viewTreeObserver
+                if (activeObserver.isAlive) {
+                    activeObserver.removeOnWindowFocusChangeListener(windowFocusListener)
+                }
+            }
+            if (audioDeviceCallbackRegistered) {
+                runCatching { audioManager.unregisterAudioDeviceCallback(audioDeviceCallback) }
+            }
             if (receiverRegistered) {
                 runCatching { appContext.unregisterReceiver(volumeReceiver) }
             }
