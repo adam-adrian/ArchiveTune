@@ -675,7 +675,6 @@ private data class NotificationPreviewState(
     val shuffleEnabled: Boolean = false,
     val downloadState: Int? = null,
     val sleepTimerActive: Boolean = false,
-    val hasSong: Boolean = false,
     val isPodcast: Boolean = false,
     val isLocal: Boolean = false,
 ) {
@@ -697,20 +696,20 @@ private fun rememberNotificationPreviewState(): NotificationPreviewState {
     val download by downloadFlow.collectAsStateWithLifecycle(initialValue = null)
     val sleepTimerActive = playerConnection.service.sleepTimer.isActive
     val current = metadata ?: return NotificationPreviewState(isPlaying = isPlaying, repeatMode = repeatMode, shuffleEnabled = shuffleEnabled, sleepTimerActive = sleepTimerActive)
+    val matchedSong = song?.takeIf { it.id == current.id }
     return NotificationPreviewState(
         title = current.title,
         artists = current.artists.joinToString { it.name }.takeIf { it.isNotBlank() },
         artworkUrl = current.thumbnailUrl,
         isPlaying = isPlaying,
-        liked = song?.song?.liked == true,
-        inLibrary = song?.song?.inLibrary != null,
+        liked = matchedSong?.song?.liked == true,
+        inLibrary = matchedSong?.song?.inLibrary != null,
         repeatMode = repeatMode,
         shuffleEnabled = shuffleEnabled,
         downloadState = download?.state,
         sleepTimerActive = sleepTimerActive,
-        hasSong = song != null,
         isPodcast = current.isPodcast,
-        isLocal = current.id.isLocalMediaId() || song?.song?.isLocal == true,
+        isLocal = current.id.isLocalMediaId() || matchedSong?.song?.isLocal == true,
     )
 }
 
@@ -1093,7 +1092,7 @@ private fun MediaNotificationAction.previewVisual(preview: NotificationPreviewSt
             PreviewActionVisual(
                 iconRes = if (preview.liked) R.drawable.favorite else R.drawable.favorite_border,
                 active = preview.liked,
-                enabled = preview.hasSong,
+                enabled = preview.hasMedia,
             )
 
         MediaNotificationAction.REPEAT ->
@@ -1119,14 +1118,14 @@ private fun MediaNotificationAction.previewVisual(preview: NotificationPreviewSt
             PreviewActionVisual(
                 iconRes = R.drawable.radio,
                 active = false,
-                enabled = preview.hasSong && !preview.isPodcast,
+                enabled = preview.hasMedia && !preview.isPodcast && !preview.isLocal,
             )
 
         MediaNotificationAction.LIBRARY ->
             PreviewActionVisual(
                 iconRes = if (preview.inLibrary) R.drawable.library_add_check else R.drawable.library_add,
                 active = preview.inLibrary,
-                enabled = preview.hasSong,
+                enabled = preview.hasMedia,
             )
 
         MediaNotificationAction.DOWNLOAD ->
