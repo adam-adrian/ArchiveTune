@@ -160,7 +160,6 @@ private val GridArtworkShape = RoundedCornerShape(GridThumbnailCornerRadius)
 private val ListArtworkShape = RoundedCornerShape(ThumbnailCornerRadius)
 private val ActiveListItemShape = RoundedCornerShape(20.dp)
 private val GridArtworkElevation = 10.dp
-private val ListArtworkElevation = 4.dp
 private val GridArtistHaloWidth = 3.dp
 private val ListArtistHaloWidth = 2.dp
 private const val ArtworkAmbientShadowAlpha = 0.28f
@@ -287,7 +286,6 @@ fun ListItem(
     trailingContent: @Composable RowScope.() -> Unit = {},
     isActive: Boolean = false,
     showActiveContainer: Boolean = true,
-    thumbnailShape: Shape? = null,
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val effectsSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Color>()
@@ -326,16 +324,7 @@ fun ListItem(
     ) {
         Box(
             contentAlignment = Alignment.Center,
-            modifier =
-                Modifier
-                    .padding(8.dp)
-                    .then(
-                        if (thumbnailShape != null) {
-                            Modifier.artworkLift(thumbnailShape, ListArtworkElevation, colorScheme.primary)
-                        } else {
-                            Modifier
-                        },
-                    ),
+            modifier = Modifier.padding(8.dp),
         ) { thumbnailContent() }
         Column(
             modifier =
@@ -377,13 +366,11 @@ fun ListItem(
     trailingContent: @Composable RowScope.() -> Unit = {},
     isActive: Boolean = false,
     showActiveContainer: Boolean = true,
-    thumbnailShape: Shape? = null,
 ) = ListItem(
     title = title,
     modifier = modifier,
     isActive = isActive,
     showActiveContainer = showActiveContainer,
-    thumbnailShape = thumbnailShape,
     subtitle = {
         badges()
         if (!subtitle.isNullOrEmpty()) {
@@ -456,6 +443,7 @@ fun GridItem(
                         Modifier
                             .fillMaxSize()
                             .artworkLift(artworkShape, GridArtworkElevation, colorScheme.primary)
+                            .background(colorScheme.surfaceContainer, artworkShape)
                             .then(
                                 if (isArtist) {
                                     Modifier
@@ -625,7 +613,6 @@ fun SongListItem(
             modifier = modifier,
             isActive = isActive,
             showActiveContainer = showActiveContainer,
-            thumbnailShape = if (albumIndex != null) null else ListArtworkShape,
         )
     }
 
@@ -843,7 +830,6 @@ fun AlbumListItem(
     trailingContent = trailingContent,
     modifier = modifier,
     isActive = isActive,
-    thumbnailShape = ListArtworkShape,
 )
 
 @Composable
@@ -988,7 +974,6 @@ fun PlaylistListItem(
     },
     trailingContent = trailingContent,
     modifier = modifier,
-    thumbnailShape = ListArtworkShape,
 )
 
 @Composable
@@ -1494,7 +1479,6 @@ fun MediaMetadataListItem(
         trailingContent = trailingContent,
         modifier = modifier,
         isActive = isActive,
-        thumbnailShape = ListArtworkShape,
     )
 }
 
@@ -1601,7 +1585,6 @@ fun YouTubeListItem(
             modifier = modifier,
             isActive = isActive,
             showActiveContainer = showActiveContainer,
-            thumbnailShape = if (item is ArtistItem || albumIndex != null) null else ListArtworkShape,
         )
     }
 
@@ -1794,14 +1777,7 @@ fun ItemThumbnail(
             modifier
                 .fillMaxSize()
                 .aspectRatio(thumbnailRatio)
-                .clip(shape)
-                .let {
-                    if (showPlaceholder) {
-                        it.background(MaterialTheme.colorScheme.surfaceVariant)
-                    } else {
-                        it
-                    }
-                },
+                .clip(shape),
     ) {
         val (cropThumbnailToSquare, _) = rememberPreference(CropThumbnailToSquareKey, false)
         val isYouTubeThumb = thumbnailUrl?.contains("ytimg.com", ignoreCase = true) == true
@@ -1825,9 +1801,11 @@ fun ItemThumbnail(
                 ),
             )
         }
+        var isImageLoaded by remember(shouldLoadImage, currentUrl) { mutableStateOf(false) }
 
         if (albumIndex == null) {
-            if (placeholderIconRes != null) {
+            val hasImageToLoad = shouldLoadImage && !currentUrl.isNullOrBlank()
+            if (!isImageLoaded && (placeholderIconRes != null || showPlaceholder || !hasImageToLoad)) {
                 Box(
                     modifier =
                         Modifier
@@ -1835,16 +1813,18 @@ fun ItemThumbnail(
                             .background(MaterialTheme.colorScheme.surfaceVariant),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        painter = painterResource(placeholderIconRes),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(ListThumbnailSize * 0.48f),
-                    )
+                    if (placeholderIconRes != null) {
+                        Icon(
+                            painter = painterResource(placeholderIconRes),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(ListThumbnailSize * 0.48f),
+                        )
+                    }
                 }
             }
 
-            if (shouldLoadImage && !currentUrl.isNullOrBlank()) {
+            if (hasImageToLoad) {
                 val request =
                     remember(currentUrl, guardedWidthPx, guardedHeightPx) {
                         ImageRequest
@@ -1866,17 +1846,21 @@ fun ItemThumbnail(
                             .fillMaxSize()
                             .let { if (shouldApplySquareCrop) it.aspectRatio(1f) else it },
                     onState = { state ->
-                        if (state is coil3.compose.AsyncImagePainter.State.Error) {
-                            getNextFallbackUrl(currentUrl)?.let { currentUrl = it }
+                        when (state) {
+                            is coil3.compose.AsyncImagePainter.State.Success -> {
+                                isImageLoaded = true
+                            }
+
+                            is coil3.compose.AsyncImagePainter.State.Error -> {
+                                isImageLoaded = false
+                                getNextFallbackUrl(currentUrl)?.let { currentUrl = it }
+                            }
+
+                            else -> {
+                                isImageLoaded = false
+                            }
                         }
                     },
-                )
-            } else if (placeholderIconRes == null) {
-                Box(
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
                 )
             }
         }
