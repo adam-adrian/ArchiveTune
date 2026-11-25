@@ -56,6 +56,7 @@ private fun stringKey(name: String) = declarePreference(PreferenceValueType.STRI
 private fun stringSetKey(name: String) = declarePreference(PreferenceValueType.STRING_SET, stringSetPreferencesKey(name))
 
 val DynamicThemeKey = booleanKey("dynamicTheme")
+val DynamicAlbumArtThemeKey = booleanKey("dynamicAlbumArtTheme")
 val CustomThemeColorKey = stringKey("customThemeColor")
 val RandomThemeOnStartupKey = booleanKey("randomThemeOnStartup")
 val DarkModeKey = stringKey("darkMode")

@@ -83,6 +83,7 @@ import moe.rukamori.archivetune.constants.DefaultLibraryFilterOrderPreference
 import moe.rukamori.archivetune.constants.DefaultOpenTabKey
 import moe.rukamori.archivetune.constants.DisableAnimationsKey
 import moe.rukamori.archivetune.constants.DisableBlurKey
+import moe.rukamori.archivetune.constants.DynamicAlbumArtThemeKey
 import moe.rukamori.archivetune.constants.DynamicThemeKey
 import moe.rukamori.archivetune.constants.FontPreferenceKey
 import moe.rukamori.archivetune.constants.ForceHighRefreshRateKey
@@ -160,6 +161,11 @@ fun AppearanceSettings(navController: NavController) {
     val (dynamicTheme, onDynamicThemeChange) =
         rememberPreference(
             DynamicThemeKey,
+            defaultValue = true,
+        )
+    val (dynamicAlbumArtTheme, onDynamicAlbumArtThemeChange) =
+        rememberPreference(
+            DynamicAlbumArtThemeKey,
             defaultValue = true,
         )
     val (wallpaperExtractionFailed) =
@@ -610,7 +616,8 @@ fun AppearanceSettings(navController: NavController) {
             PreferenceGroup(title = stringResource(R.string.theme)) {
                 item {
                     SwitchPreference(
-                        title = { Text(stringResource(R.string.enable_dynamic_theme)) },
+                        title = { Text(stringResource(R.string.system_dynamic_theme)) },
+                        description = stringResource(R.string.system_dynamic_theme_desc),
                         icon = { Icon(painterResource(R.drawable.palette), null) },
                         checked = dynamicTheme,
                         onCheckedChange = onDynamicThemeChange,
@@ -649,6 +656,16 @@ fun AppearanceSettings(navController: NavController) {
                         description = stringResource(R.string.customize_theme_colors),
                         icon = { Icon(painterResource(R.drawable.format_paint), null) },
                         onClick = { navController.navigate("settings/appearance/palette_picker") },
+                    )
+                }
+
+                item {
+                    SwitchPreference(
+                        title = { Text(stringResource(R.string.album_art_dynamic_theme)) },
+                        description = stringResource(R.string.album_art_dynamic_theme_desc),
+                        icon = { Icon(painterResource(R.drawable.album), null) },
+                        checked = dynamicAlbumArtTheme,
+                        onCheckedChange = onDynamicAlbumArtThemeChange,
                     )
                 }
 

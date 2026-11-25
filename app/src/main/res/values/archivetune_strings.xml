@@ -1165,4 +1165,8 @@
     <string name="media_notification_reset_done">Notification settings reset</string>
     <string name="media_notification_settings_load_failed">Couldn\'t load notification settings</string>
     <string name="media_notification_settings_save_failed">Couldn\'t save notification settings</string>
+    <string name="system_dynamic_theme">Material You theme</string>
+    <string name="system_dynamic_theme_desc">Match app colors to your wallpaper</string>
+    <string name="album_art_dynamic_theme">Colors from artwork</string>
+    <string name="album_art_dynamic_theme_desc">Override app colors using the currently playing song\'s artwork</string>
 </resources>

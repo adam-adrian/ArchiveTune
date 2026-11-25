@@ -16,14 +16,18 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import moe.rukamori.archivetune.constants.DeclaredPreferenceTypes
+import moe.rukamori.archivetune.constants.DynamicAlbumArtThemeKey
+import moe.rukamori.archivetune.constants.DynamicThemeKey
 import moe.rukamori.archivetune.constants.PreferenceValueType
 
 internal object PreferenceSchemaMigration : DataMigration<Preferences> {
     override suspend fun shouldMigrate(currentData: Preferences): Boolean {
         val declaredTypes = DeclaredPreferenceTypes
-        return currentData.asMap().any { (key, value) ->
-            declaredTypes[key.name]?.accepts(value) != true
-        }
+        val hasTypeMismatch =
+            currentData.asMap().any { (key, value) ->
+                declaredTypes[key.name]?.accepts(value) != true
+            }
+        return hasTypeMismatch || !currentData.contains(DynamicAlbumArtThemeKey)
     }
 
     override suspend fun migrate(currentData: Preferences): Preferences {
@@ -36,6 +40,9 @@ internal object PreferenceSchemaMigration : DataMigration<Preferences> {
             if (declaredType != null) {
                 migrated.putConverted(key.name, declaredType, value)
             }
+        }
+        if (migrated[DynamicAlbumArtThemeKey] == null) {
+            migrated[DynamicAlbumArtThemeKey] = migrated[DynamicThemeKey] ?: true
         }
         return migrated
     }
