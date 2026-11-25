@@ -584,6 +584,14 @@ class MusicService :
 
     @Volatile
     private var isHydratingRestoredQueue = false
+
+    @Volatile
+    private var shouldRestorePersistedQueueOnBind = false
+
+    @Volatile
+    private var isServiceDestroyed = false
+    private var persistentQueueRestoreJob: Job? = null
+    private val persistentRestoreGeneration = AtomicLong(0L)
     private val restoredQueueHydrationGeneration = AtomicLong(0L)
 
     @Volatile
@@ -1168,6 +1176,7 @@ class MusicService :
     }
 
     private fun ensureForegroundPlaybackService() {
+        discordServiceStopping = false
         if (!isPlaybackServiceStarted) {
             try {
                 isPlaybackServiceStarted =
@@ -1785,41 +1794,7 @@ class MusicService :
                 }
             }
 
-        scope.launch(Dispatchers.IO) {
-            runCatching {
-                if (dataStore.get(PersistentQueueKey, true)) {
-                    playerInitialized.first { it }
-                    val persistedQueue = readPersistentObject<PersistQueue>(PERSISTENT_QUEUE_FILE)
-                    val persistedPlayerState = readPersistentObject<PersistPlayerState>(PERSISTENT_PLAYER_STATE_FILE)
-
-                    if (persistedQueue != null || persistedPlayerState != null) {
-                        isRestoringPersistentState = true
-                    }
-
-                    var restoredQueue = false
-                    try {
-                        persistedQueue?.let { queue ->
-                            restorePersistentQueue(queue)
-                            restoredQueue = true
-                        }
-                        persistedPlayerState?.let { playerState ->
-                            restorePersistentPlayerState(playerState, restoredQueue)
-                        }
-                    } finally {
-                        isRestoringPersistentState = false
-                    }
-                }
-            }.onFailure { error ->
-                if (error is CancellationException) throw error
-                Timber.tag(TAG).w(error, "Failed to restore persisted queue, clearing data")
-                isRestoringPersistentState = false
-                cancelRestoredQueueHydration()
-                clearPersistedQueueFiles()
-            }
-            withContext(Dispatchers.Main) {
-                queueRestoreCompleted.value = true
-            }
-        }
+        restorePersistedStateFromDisk(isInitialRestore = true)
 
         scope.launch {
             while (isActive) {
@@ -2457,7 +2432,102 @@ class MusicService :
         }
     }
 
-    private suspend fun restorePersistentQueue(persistedQueue: PersistQueue) {
+    private fun hasPersistedQueueFile(): Boolean = filesDir.resolve(PERSISTENT_QUEUE_FILE).exists()
+
+    private fun cancelActivePersistedQueueRestore() {
+        val hadActiveRestore =
+            persistentQueueRestoreJob?.isActive == true ||
+                isRestoringPersistentState ||
+                isHydratingRestoredQueue
+        persistentRestoreGeneration.incrementAndGet()
+        persistentQueueRestoreJob?.cancel()
+        persistentQueueRestoreJob = null
+        isRestoringPersistentState = false
+        cancelRestoredQueueHydration()
+        if (hadActiveRestore) {
+            queueRestoreCompleted.value = true
+        }
+    }
+
+    private fun cancelPendingPersistedQueueRestore() {
+        shouldRestorePersistedQueueOnBind = false
+        cancelActivePersistedQueueRestore()
+    }
+
+    private fun restorePersistedStateFromDisk(isInitialRestore: Boolean = false) {
+        if (persistentQueueRestoreJob?.isActive == true) return
+        val restoreGeneration = persistentRestoreGeneration.incrementAndGet()
+        queueRestoreCompleted.value = false
+        persistentQueueRestoreJob =
+            scope.launch(Dispatchers.IO) {
+                try {
+                    runCatching {
+                        if (dataStore.get(PersistentQueueKey, true)) {
+                            playerInitialized.first { it }
+                            val hasExistingItems =
+                                withContext(Dispatchers.Main.immediate) {
+                                    player.mediaItemCount > 0
+                                }
+                            if (!isInitialRestore && hasExistingItems) {
+                                return@runCatching
+                            }
+                            if (restoreGeneration != persistentRestoreGeneration.get()) {
+                                return@runCatching
+                            }
+                            val persistedQueue = readPersistentObject<PersistQueue>(PERSISTENT_QUEUE_FILE)
+                            val persistedPlayerState = readPersistentObject<PersistPlayerState>(PERSISTENT_PLAYER_STATE_FILE)
+
+                            if (restoreGeneration != persistentRestoreGeneration.get()) {
+                                return@runCatching
+                            }
+
+                            if (persistedQueue != null || persistedPlayerState != null) {
+                                isRestoringPersistentState = true
+                            }
+
+                            var restoredQueue = false
+                            try {
+                                persistedQueue?.let { queue ->
+                                    if (restoreGeneration == persistentRestoreGeneration.get()) {
+                                        restoredQueue = restorePersistentQueue(queue)
+                                    }
+                                }
+                                if (
+                                    restoreGeneration == persistentRestoreGeneration.get() &&
+                                    (restoredQueue || persistedQueue == null)
+                                ) {
+                                    persistedPlayerState?.let { playerState ->
+                                        restorePersistentPlayerState(playerState, restoredQueue)
+                                    }
+                                }
+                            } finally {
+                                if (restoreGeneration == persistentRestoreGeneration.get()) {
+                                    isRestoringPersistentState = false
+                                }
+                            }
+                        }
+                    }.onFailure { error ->
+                        if (error is CancellationException) throw error
+                        Timber.tag(TAG).w(error, "Failed to restore persisted queue, clearing data")
+                        if (restoreGeneration == persistentRestoreGeneration.get()) {
+                            isRestoringPersistentState = false
+                            cancelRestoredQueueHydration()
+                            clearPersistedQueueFiles()
+                        }
+                    }
+                } finally {
+                    withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main.immediate) {
+                        if (restoreGeneration == persistentRestoreGeneration.get()) {
+                            persistentQueueRestoreJob = null
+                            isRestoringPersistentState = false
+                            queueRestoreCompleted.value = true
+                        }
+                    }
+                }
+            }
+    }
+
+    private suspend fun restorePersistentQueue(persistedQueue: PersistQueue): Boolean {
         val hydrationGeneration = withContext(Dispatchers.Main.immediate) {
             cancelRestoredQueueHydration()
             initialQueueJob?.cancel()
@@ -2474,8 +2544,8 @@ class MusicService :
                     dataStore.get(HideExplicitKey, false), dataStore.get(HideVideoKey, false),
                 )
             }
-            withContext(Dispatchers.Main.immediate) {
-                if (hydrationGeneration != restoredQueueHydrationGeneration.get()) return@withContext
+            return withContext(Dispatchers.Main.immediate) {
+                if (hydrationGeneration != restoredQueueHydrationGeneration.get()) return@withContext false
                 val source = persistedQueue.toContinuationQueue()
                 recommendationQueue = persistedQueue.recommendationData?.let { data ->
                     YouTubeQueue(
@@ -2486,7 +2556,8 @@ class MusicService :
                 } ?: (source as? YouTubeQueue)?.takeIf { it.isRadio }
                 currentQueue = if (source.isRadio) EmptyQueue else source
                 queueTitle = initialStatus.title
-                if (initialStatus.items.isEmpty()) return@withContext
+                if (initialStatus.items.isEmpty()) return@withContext false
+                suppressAutoPlayback = false
                 player.setMediaItems(
                     initialStatus.items,
                     initialStatus.mediaItemIndex.coerceIn(initialStatus.items.indices),
@@ -2496,6 +2567,7 @@ class MusicService :
                 player.playWhenReady = false
                 currentMediaMetadata.value = player.currentMetadata
                 updateNotification()
+                true
             }
         } finally {
             withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main.immediate) {
@@ -4113,6 +4185,8 @@ class MusicService :
         ensureScopesActive()
         cancelCrossfade(resetVolume = true)
         cancelInfiniteQueueBootstrap()
+        cancelPendingPersistedQueueRestore()
+        discordServiceStopping = false
         suppressAutoPlayback = false
         initialQueueJob?.cancel()
         queuePageJob?.cancel()
@@ -4691,7 +4765,7 @@ class MusicService :
     }
 
     fun stopAndClearPlayback(clearPersistentState: Boolean = false) {
-        cancelRestoredQueueHydration()
+        cancelActivePersistedQueueRestore()
         initialQueueJob?.cancel()
         queuePageJob?.cancel()
         queuePageJob = null
@@ -4710,6 +4784,7 @@ class MusicService :
         closeAudioEffectSession()
         consecutivePlaybackErr = 0
         if (clearPersistentState) {
+            shouldRestorePersistedQueueOnBind = false
             clearPersistedQueueFiles()
         }
     }
@@ -4740,6 +4815,7 @@ class MusicService :
             }
             return
         }
+        cancelPendingPersistedQueueRestore()
         suppressAutoPlayback = false
         val insertionIndex = if (player.mediaItemCount == 0) 0 else player.currentMediaItemIndex + 1
         val playNextShuffleOrder =
@@ -4842,6 +4918,7 @@ class MusicService :
             }
             return
         }
+        cancelPendingPersistedQueueRestore()
         suppressAutoPlayback = false
         player.addMediaItems(allowedItems.map { it.withQueueEntry(recommended = false, id = java.util.UUID.randomUUID().toString()) })
         player.prepare()
@@ -8764,11 +8841,11 @@ class MusicService :
     private fun writePersistentObject(
         fileName: String,
         payload: Serializable,
-    ) {
+    ): Boolean {
         val persistentFile = filesDir.resolve(fileName)
         val tempFile = filesDir.resolve("$fileName.tmp")
 
-        synchronized(persistentStateLock) {
+        return synchronized(persistentStateLock) {
             runCatching {
                 FileOutputStream(tempFile).use { fos ->
                     ObjectOutputStream(fos).use { output ->
@@ -8785,10 +8862,11 @@ class MusicService :
                         error("Could not atomically move $fileName")
                     }
                 }
+                true
             }.onFailure {
                 runCatching { tempFile.delete() }
                 reportException(it)
-            }
+            }.getOrDefault(false)
         }
     }
 
@@ -8859,12 +8937,10 @@ class MusicService :
         )
     }
 
-    private suspend fun saveQueueToDisk() {
-        val saveGeneration = persistentSaveGeneration.get()
-        val snapshot =
+    private suspend fun saveQueueToDisk(): Boolean {
+        val snapshotWithGeneration =
             withContext(Dispatchers.Main.immediate) {
                 if (
-                    saveGeneration != persistentSaveGeneration.get() ||
                     isRestoringPersistentState ||
                     isHydratingRestoredQueue
                 ) {
@@ -8875,6 +8951,7 @@ class MusicService :
                 val mediaItemsSnapshot = entrySnapshot.map { it.first }
                 if (mediaItemsSnapshot.isEmpty()) return@withContext null
 
+                val saveGeneration = persistentSaveGeneration.incrementAndGet()
                 val currentMediaItemIndex = player.currentMediaItemIndex
                 val currentPosition = player.currentPosition
                 val persistQueue =
@@ -8908,18 +8985,22 @@ class MusicService :
                         playbackState = player.playbackState,
                     )
 
-                persistQueue to persistPlayerState
-            } ?: return
+                Triple(saveGeneration, persistQueue, persistPlayerState)
+            } ?: return false
 
-        withContext(Dispatchers.IO) {
-            if (saveGeneration != persistentSaveGeneration.get()) return@withContext
-            writePersistentObject(PERSISTENT_QUEUE_FILE, snapshot.first)
-            if (saveGeneration != persistentSaveGeneration.get()) return@withContext
-            writePersistentObject(PERSISTENT_PLAYER_STATE_FILE, snapshot.second)
+        val (saveGeneration, persistQueue, persistPlayerState) = snapshotWithGeneration
+        return withContext(Dispatchers.IO) {
+            if (saveGeneration != persistentSaveGeneration.get()) return@withContext false
+            val wroteQueue = writePersistentObject(PERSISTENT_QUEUE_FILE, persistQueue)
+            if (!wroteQueue || saveGeneration != persistentSaveGeneration.get()) return@withContext false
+            writePersistentObject(PERSISTENT_PLAYER_STATE_FILE, persistPlayerState)
         }
     }
 
     override fun onDestroy() {
+        isServiceDestroyed = true
+        persistentQueueRestoreJob?.cancel()
+        persistentQueueRestoreJob = null
         binder.release()
         equalizerPlaybackController.detach(this)
         sponsorBlockPlaybackController.detach()
@@ -8983,14 +9064,19 @@ class MusicService :
 
     override fun onBind(intent: Intent?): android.os.IBinder? {
         boundClientCount++
+        discordServiceStopping = false
         cancelIdleStop()
         val result = super.onBind(intent) ?: binder
         if (player.mediaItemCount > 0 && player.currentMediaItem != null) {
+            shouldRestorePersistedQueueOnBind = false
             currentMediaMetadata.value = player.currentMetadata
             scope.launch {
                 delay(50)
                 updateNotification()
             }
+        } else if (result === binder && shouldRestorePersistedQueueOnBind) {
+            shouldRestorePersistedQueueOnBind = false
+            restorePersistedStateFromDisk()
         }
         return result
     }
@@ -9003,8 +9089,57 @@ class MusicService :
 
     override fun onRebind(intent: Intent?) {
         boundClientCount++
+        discordServiceStopping = false
         cancelIdleStop()
         super.onRebind(intent)
+        if (intent?.action == null && player.mediaItemCount == 0 && shouldRestorePersistedQueueOnBind) {
+            shouldRestorePersistedQueueOnBind = false
+            restorePersistedStateFromDisk()
+        }
+    }
+
+    fun stopForTaskClear() {
+        if (isServiceDestroyed) return
+        val persistentQueueEnabled = dataStore.get(PersistentQueueKey, true)
+        val hadQueueOrRestore =
+            player.mediaItemCount > 0 ||
+                persistentQueueRestoreJob?.isActive == true ||
+                isRestoringPersistentState ||
+                isHydratingRestoredQueue
+        val savedPersistedQueue =
+            if (persistentQueueEnabled && player.mediaItemCount > 0) {
+                runCatching { runBlocking { saveQueueToDisk() } }.getOrDefault(false)
+            } else {
+                false
+            }
+        if (::sleepTimer.isInitialized) sleepTimer.clear()
+        discordServiceStopping = true
+        requestDiscordSync(
+            reason = "task_removed_stop_music_on_task_clear",
+            force = true,
+        )
+        if (
+            togetherSessionState.value !is moe.rukamori.archivetune.together.TogetherSessionState.Idle ||
+            togetherServer != null ||
+            togetherOnlineHost != null ||
+            togetherClient != null
+        ) {
+            runCatching { togetherSessionState.value = moe.rukamori.archivetune.together.TogetherSessionState.Idle }
+            runCatching {
+                CoroutineScope(SupervisorJob() + Dispatchers.IO).launch(SilentHandler) {
+                    stopTogetherInternal()
+                }
+            }
+        }
+        shouldRestorePersistedQueueOnBind =
+            persistentQueueEnabled &&
+            (
+                shouldRestorePersistedQueueOnBind ||
+                    savedPersistedQueue ||
+                    (hadQueueOrRestore && hasPersistedQueueFile())
+            )
+        runCatching { stopAndClearPlayback(clearPersistentState = !persistentQueueEnabled) }
+        stopForegroundAndSelf()
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -9026,13 +9161,7 @@ class MusicService :
 
             if (shouldStopServiceOnTaskRemoved(stopMusicOnTaskClearEnabled, isHostSessionActive, isPlaybackInactive)) {
                 if (stopMusicOnTaskClearEnabled) {
-                    discordServiceStopping = true
-                    requestDiscordSync(
-                        reason = "task_removed_stop_music_on_task_clear",
-                        force = true,
-                    )
-                    runCatching { stopAndClearPlayback(clearPersistentState = true) }
-                    stopForegroundAndSelf()
+                    stopForTaskClear()
                     return
                 }
 
@@ -9104,6 +9233,7 @@ class MusicService :
             return START_NOT_STICKY
         }
 
+        discordServiceStopping = false
         enterForegroundForStartCommand()
         if (!hasResumablePlaybackNotification()) {
             scheduleStopIfIdle()

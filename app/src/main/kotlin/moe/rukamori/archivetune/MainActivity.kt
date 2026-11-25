@@ -583,7 +583,7 @@ class MainActivity : ComponentActivity() {
             }
 
         if (shouldStopOnTaskClear) {
-            playerConnection?.service?.stopAndClearPlayback(clearPersistentState = true)
+            playerConnection?.service?.stopForTaskClear()
             safeUnbindMusicService()
             stopService(Intent(this, MusicService::class.java))
         }
