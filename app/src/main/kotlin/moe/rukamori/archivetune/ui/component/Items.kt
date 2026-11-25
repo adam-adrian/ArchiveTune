@@ -456,6 +456,7 @@ fun GridItem(
                         Modifier
                             .fillMaxSize()
                             .artworkLift(artworkShape, GridArtworkElevation, colorScheme.primary)
+                            .background(colorScheme.surfaceContainer, artworkShape)
                             .then(
                                 if (isArtist) {
                                     Modifier
@@ -1794,14 +1795,7 @@ fun ItemThumbnail(
             modifier
                 .fillMaxSize()
                 .aspectRatio(thumbnailRatio)
-                .clip(shape)
-                .let {
-                    if (showPlaceholder) {
-                        it.background(MaterialTheme.colorScheme.surfaceVariant)
-                    } else {
-                        it
-                    }
-                },
+                .clip(shape),
     ) {
         val (cropThumbnailToSquare, _) = rememberPreference(CropThumbnailToSquareKey, false)
         val isYouTubeThumb = thumbnailUrl?.contains("ytimg.com", ignoreCase = true) == true
@@ -1825,9 +1819,11 @@ fun ItemThumbnail(
                 ),
             )
         }
+        var isImageLoaded by remember(shouldLoadImage, currentUrl) { mutableStateOf(false) }
 
         if (albumIndex == null) {
-            if (placeholderIconRes != null) {
+            val hasImageToLoad = shouldLoadImage && !currentUrl.isNullOrBlank()
+            if (!isImageLoaded && (placeholderIconRes != null || showPlaceholder || !hasImageToLoad)) {
                 Box(
                     modifier =
                         Modifier
@@ -1835,16 +1831,18 @@ fun ItemThumbnail(
                             .background(MaterialTheme.colorScheme.surfaceVariant),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        painter = painterResource(placeholderIconRes),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(ListThumbnailSize * 0.48f),
-                    )
+                    if (placeholderIconRes != null) {
+                        Icon(
+                            painter = painterResource(placeholderIconRes),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(ListThumbnailSize * 0.48f),
+                        )
+                    }
                 }
             }
 
-            if (shouldLoadImage && !currentUrl.isNullOrBlank()) {
+            if (hasImageToLoad) {
                 val request =
                     remember(currentUrl, guardedWidthPx, guardedHeightPx) {
                         ImageRequest
@@ -1866,17 +1864,21 @@ fun ItemThumbnail(
                             .fillMaxSize()
                             .let { if (shouldApplySquareCrop) it.aspectRatio(1f) else it },
                     onState = { state ->
-                        if (state is coil3.compose.AsyncImagePainter.State.Error) {
-                            getNextFallbackUrl(currentUrl)?.let { currentUrl = it }
+                        when (state) {
+                            is coil3.compose.AsyncImagePainter.State.Success -> {
+                                isImageLoaded = true
+                            }
+
+                            is coil3.compose.AsyncImagePainter.State.Error -> {
+                                isImageLoaded = false
+                                getNextFallbackUrl(currentUrl)?.let { currentUrl = it }
+                            }
+
+                            else -> {
+                                isImageLoaded = false
+                            }
                         }
                     },
-                )
-            } else if (placeholderIconRes == null) {
-                Box(
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
                 )
             }
         }
