@@ -656,10 +656,6 @@
     <string name="updates_loading_commits">Đang tải các commit gần nhất</string>
     <string name="updates_recent_commits_count">%1$d commit mới nhất</string>
     <string name="updates_no_commits">Không có commit mới gần đây</string>
-    <string name="you_might_like_source">Bạn có thể thích nguồn</string>
-    <string name="playlist_suggestion_source_title">Danh sách nhạc tiêu đề</string>
-    <string name="playlist_suggestion_source_content">Nội dung danh sách nhạc</string>
-    <string name="playlist_suggestion_source_both">Danh sách phát tiêu đề và nội dung</string>
     <string name="aod_mode">Chế độ AOD</string>
     <string name="support_development_title">Hỗ trợ phát triển</string>
     <string name="support_development_message">Chào mọi người! Tôi là rukamori, nhà phát triển của ArchiveTune. Nếu ArchiveTune đã trở thành một phần trong danh sách nghe nhạc hàng ngày của bạn, bạn có thể giúp dự án tiếp tục phát triển bằng cách quyên góp hoặc đánh dấu sao trên GitHub. Cảm ơn vì đã ủng hộ công sức của chúng tôi trong việc phát triển ứng dụng.</string>

@@ -1277,10 +1277,6 @@
     <string name="onboarding_error_open_permission">権限リクエストまたは Android 設定を開けませんでした。</string>
     <string name="you_might_like">あなたは好きかもしれません</string>
     <string name="refresh_suggestions">提案を更新する</string>
-    <string name="you_might_like_source">プレイリストの推奨ソース</string>
-    <string name="playlist_suggestion_source_title">プレイリストのタイトル</string>
-    <string name="playlist_suggestion_source_content">プレイリストの内容</string>
-    <string name="playlist_suggestion_source_both">プレイリストのタイトルと内容</string>
     <string name="music_together">アーカイブ一緒に音楽をチューニング</string>
     <string name="together_display_name">表示名</string>
     <string name="together_display_name_placeholder">あなたの名前</string>

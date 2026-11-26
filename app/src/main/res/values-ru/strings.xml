@@ -629,10 +629,6 @@
     <string name="updates_loading_commits">Загрузка последних коммитов</string>
     <string name="updates_recent_commits_count">%1$d последних коммитов</string>
     <string name="updates_no_commits">Не найдено последних коммитов</string>
-    <string name="you_might_like_source">Вам может понравиться источник</string>
-    <string name="playlist_suggestion_source_title">Название плейлиста</string>
-    <string name="playlist_suggestion_source_content">Контент плейлиста</string>
-    <string name="playlist_suggestion_source_both">Название плейлиста и контент</string>
     <string name="album_backdrop">Размытие фона</string>
     <string name="album_backdrop_desc">Показывать изображение в качестве размытого фона на плеере</string>
     <string name="backdrop_blur_amount">Степень размытия фона</string>

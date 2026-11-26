@@ -959,10 +959,6 @@
     <string name="onboarding_community_donate_desc">دعم التطوير المستمر.</string>
     <string name="you_might_like">قد يعجبك</string>
     <string name="refresh_suggestions">تحديث الاقتراحات</string>
-    <string name="you_might_like_source">مصدر توصية قائمة التشغيل</string>
-    <string name="playlist_suggestion_source_title">عنوان قائمة التشغيل</string>
-    <string name="playlist_suggestion_source_content">محتوى قائمة التشغيل</string>
-    <string name="playlist_suggestion_source_both">عنوان ومحتوى قائمة التشغيل</string>
     <string name="music_together">ArchiveTune Music Together</string>
     <string name="together_display_name">الاسم المعروض</string>
     <string name="together_display_name_placeholder">اسمك</string>

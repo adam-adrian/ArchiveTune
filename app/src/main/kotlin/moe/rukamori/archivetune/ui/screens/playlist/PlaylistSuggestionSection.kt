@@ -27,8 +27,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -69,18 +69,42 @@ fun PlaylistSuggestionsSection(
     val database = LocalDatabase.current
     val coroutineScope = rememberCoroutineScope()
     val playerConnection = LocalPlayerConnection.current
-    val isPlaying by playerConnection?.isPlaying?.collectAsState() ?: androidx.compose.runtime.mutableStateOf(false)
-    val mediaMetadata by playerConnection?.mediaMetadata?.collectAsState() ?: androidx.compose.runtime.mutableStateOf(null)
+    val isPlaying = playerConnection?.isPlaying?.collectAsStateWithLifecycle()?.value == true
+    val mediaMetadata = playerConnection?.mediaMetadata?.collectAsStateWithLifecycle()?.value
 
     val playlistSuggestions by viewModel.playlistSuggestions.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoadingSuggestions.collectAsStateWithLifecycle()
 
-    // State for duplicate check dialog
+    // State for duplicate check dialog & in-flight add guard
     var showDuplicateDialog by remember { mutableStateOf(false) }
     var songToCheck by remember { mutableStateOf<SongItem?>(null) }
+    var addingSongIds by remember { mutableStateOf(emptySet<String>()) }
 
     val currentSuggestions = playlistSuggestions
     if (currentSuggestions == null && !isLoading) return
+
+    val addSongAndNotify: suspend (SongItem) -> Unit = { song ->
+        val browseId =
+            viewModel.playlist.value
+                ?.playlist
+                ?.browseId
+        val success = viewModel.addSongToPlaylist(song = song, browseId = browseId)
+        if (success) {
+            val playlistName =
+                viewModel.playlist.value
+                    ?.playlist
+                    ?.name
+            val message =
+                if (playlistName != null) {
+                    context.getString(R.string.added_to_playlist, playlistName)
+                } else {
+                    context.getString(R.string.add_to_playlist)
+                }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, R.string.error_unknown, Toast.LENGTH_SHORT).show()
+        }
+    }
 
     // Duplicate Check Dialog
     if (showDuplicateDialog && songToCheck != null) {
@@ -99,25 +123,15 @@ fun PlaylistSuggestionsSection(
                 }
                 TextButton(
                     onClick = {
-                        coroutineScope.launch {
-                            // Add to current playlist anyway
-                            val browseId =
-                                viewModel.playlist.value
-                                    ?.playlist
-                                    ?.browseId
-                            viewModel.addSongToPlaylist(song, browseId)
-
-                            val playlistName =
-                                viewModel.playlist.value
-                                    ?.playlist
-                                    ?.name
-                            val message =
-                                if (playlistName != null) {
-                                    context.getString(R.string.added_to_playlist, playlistName)
-                                } else {
-                                    context.getString(R.string.add_to_playlist)
+                        if (song.id !in addingSongIds) {
+                            addingSongIds = addingSongIds + song.id
+                            coroutineScope.launch {
+                                try {
+                                    addSongAndNotify(song)
+                                } finally {
+                                    addingSongIds = addingSongIds - song.id
                                 }
-                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            }
                         }
                         showDuplicateDialog = false
                         songToCheck = null
@@ -148,18 +162,18 @@ fun PlaylistSuggestionsSection(
                 title = stringResource(R.string.you_might_like),
                 subtitle =
                     currentSuggestions?.let { s ->
-                        if (s.totalQueries > 1) {
-                            "${s.currentQueryIndex + 1} / ${s.totalQueries}"
+                        if (s.totalPages > 1) {
+                            "${s.currentPage + 1} / ${s.totalPages}"
                         } else {
                             null
                         }
                     },
                 modifier = Modifier.weight(1f),
             )
-            if (currentSuggestions != null && currentSuggestions.totalQueries > 1) {
+            if (currentSuggestions != null && currentSuggestions.totalPages > 1) {
                 androidx.compose.material3.IconButton(
                     onClick = remember(viewModel) { { viewModel.changeSuggestionPage(-1) } },
-                    enabled = !isLoading && currentSuggestions.currentQueryIndex > 0,
+                    enabled = !isLoading && currentSuggestions.currentPage > 0,
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.arrow_back),
@@ -169,7 +183,7 @@ fun PlaylistSuggestionsSection(
                 androidx.compose.material3.IconButton(
                     onClick = remember(viewModel) { { viewModel.changeSuggestionPage(1) } },
                     enabled = !isLoading &&
-                        currentSuggestions.currentQueryIndex < currentSuggestions.totalQueries - 1,
+                        currentSuggestions.currentPage < currentSuggestions.totalPages - 1,
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.arrow_forward),
@@ -183,85 +197,62 @@ fun PlaylistSuggestionsSection(
 
         currentSuggestions?.let { suggestions ->
             // Suggestions List (Vertical)
-            suggestions.items.forEach { item ->
-                YouTubeListItem(
-                    item = item,
-                    swipeContentBackgroundColor = swipeContentBackgroundColor,
-                    isActive = item.id == mediaMetadata?.id,
-                    isPlaying = isPlaying == true,
-                    trailingContent = {
-                        IconButton(
-                            onClick = {
-                                val songItem = item as? SongItem
-                                if (songItem != null) {
-                                    // Check for duplicates in current playlist first
-                                    songToCheck = songItem
+            suggestions.items.forEach { songItem ->
+                key(songItem.id) {
+                    val isAdding = songItem.id in addingSongIds
+                    YouTubeListItem(
+                        item = songItem,
+                        swipeContentBackgroundColor = swipeContentBackgroundColor,
+                        isActive = songItem.id == mediaMetadata?.id,
+                        isPlaying = isPlaying,
+                        trailingContent = {
+                            IconButton(
+                                enabled = !isAdding,
+                                onClick = {
+                                    if (songItem.id in addingSongIds) return@IconButton
+                                    addingSongIds = addingSongIds + songItem.id
                                     coroutineScope.launch {
-                                        val isDuplicate =
-                                            withContext(Dispatchers.IO) {
-                                                val duplicates =
-                                                    database.playlistDuplicates(
-                                                        viewModel.playlistId,
-                                                        listOf(songItem.id),
-                                                    )
-                                                duplicates.isNotEmpty()
-                                            }
+                                        try {
+                                            val isDuplicate =
+                                                withContext(Dispatchers.IO) {
+                                                    val duplicates =
+                                                        database.playlistDuplicates(
+                                                            viewModel.playlistId,
+                                                            listOf(songItem.id),
+                                                        )
+                                                    duplicates.isNotEmpty()
+                                                }
 
-                                        if (isDuplicate) {
-                                            showDuplicateDialog = true
-                                        } else {
-                                            // No duplicate, add directly
-                                            val browseId =
-                                                viewModel.playlist.value
-                                                    ?.playlist
-                                                    ?.browseId
-                                            val success =
-                                                viewModel.addSongToPlaylist(
-                                                    song = songItem,
-                                                    browseId = browseId,
-                                                )
-
-                                            if (success) {
-                                                val playlistName =
-                                                    viewModel.playlist.value
-                                                        ?.playlist
-                                                        ?.name
-                                                val message =
-                                                    if (playlistName != null) {
-                                                        context.getString(R.string.added_to_playlist, playlistName)
-                                                    } else {
-                                                        context.getString(R.string.add_to_playlist)
-                                                    }
-                                                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                            if (isDuplicate) {
+                                                songToCheck = songItem
+                                                showDuplicateDialog = true
                                             } else {
-                                                Toast.makeText(context, R.string.error_unknown, Toast.LENGTH_SHORT).show()
+                                                addSongAndNotify(songItem)
                                             }
+                                        } finally {
+                                            addingSongIds = addingSongIds - songItem.id
                                         }
                                     }
-                                } else {
-                                    Toast.makeText(context, R.string.error_unknown, Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            onLongClick = {},
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.playlist_add),
-                                contentDescription = stringResource(R.string.add_to_playlist),
-                            )
-                        }
-                    },
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(MaterialTheme.shapes.medium)
-                            .clickable {
-                                if (playerConnection == null) return@clickable
-                                if (item.id == mediaMetadata?.id) {
-                                    playerConnection.player.togglePlayPause()
-                                } else {
-                                    if (item is SongItem) {
-                                        val songItems = suggestions.items.filterIsInstance<SongItem>()
-                                        val startIndex = songItems.indexOfFirst { it.id == item.id }
+                                },
+                                onLongClick = {},
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.playlist_add),
+                                    contentDescription = stringResource(R.string.add_to_playlist),
+                                )
+                            }
+                        },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(MaterialTheme.shapes.medium)
+                                .clickable {
+                                    if (playerConnection == null) return@clickable
+                                    if (songItem.id == mediaMetadata?.id) {
+                                        playerConnection.player.togglePlayPause()
+                                    } else {
+                                        val songItems = suggestions.items
+                                        val startIndex = songItems.indexOfFirst { it.id == songItem.id }
                                         if (startIndex != -1) {
                                             playerConnection.playQueue(
                                                 ListQueue(
@@ -272,37 +263,37 @@ fun PlaylistSuggestionsSection(
                                             )
                                         }
                                     }
-                                }
-                            },
-                )
-            }
-
-            Box(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (isLoading) {
-                    CircularWavyProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = MaterialTheme.colorScheme.primary,
+                                },
                     )
-                } else {
-                    TextButton(
-                        onClick = { viewModel.resetAndLoadPlaylistSuggestions() },
-                        shapes = ButtonDefaults.shapes(),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                painter = painterResource(R.drawable.sync),
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(modifier = Modifier.size(8.dp))
-                            Text(text = stringResource(R.string.refresh_suggestions))
-                        }
+                }
+            }
+        }
+
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (isLoading) {
+                CircularWavyProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            } else {
+                TextButton(
+                    onClick = { viewModel.resetAndLoadPlaylistSuggestions() },
+                    shapes = ButtonDefaults.shapes(),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            painter = painterResource(R.drawable.sync),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.size(8.dp))
+                        Text(text = stringResource(R.string.refresh_suggestions))
                     }
                 }
             }

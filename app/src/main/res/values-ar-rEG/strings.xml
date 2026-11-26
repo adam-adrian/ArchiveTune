@@ -826,10 +826,6 @@
     <string name="onboarding_community_donate_desc">ادعم استمرار تطوير التطبيق.</string>
     <string name="you_might_like">حاجات هتعجبك</string>
     <string name="refresh_suggestions">تحديث المقترحات</string>
-    <string name="you_might_like_source">مصدر ترشيحات البلاي ليست</string>
-    <string name="playlist_suggestion_source_title">عنوان البلاي ليست</string>
-    <string name="playlist_suggestion_source_content">محتوى البلاي ليست</string>
-    <string name="playlist_suggestion_source_both">عنوان ومحتوى البلاي ليست</string>
     <string name="music_together">جلسات استماع ArchiveTune المشتركة</string>
     <string name="together_display_name">الاسم المستعار</string>
     <string name="together_display_name_placeholder">اسمك</string>

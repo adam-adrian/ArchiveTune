@@ -945,10 +945,6 @@
     <string name="onboarding_community_donate_desc">Dukung pengembangan yang berlangsung.</string>
     <string name="you_might_like">Anda mungkin menyukai</string>
     <string name="refresh_suggestions">Segarkan saran</string>
-    <string name="you_might_like_source">Sumber rekomendasi playlist</string>
-    <string name="playlist_suggestion_source_title">Judul playlist</string>
-    <string name="playlist_suggestion_source_content">Konten playlist</string>
-    <string name="playlist_suggestion_source_both">Judul dan konten playlist</string>
     <string name="music_together">ArchiveTune Musik Bersama</string>
     <string name="together_display_name">Nama tampilan</string>
     <string name="together_display_name_placeholder">Nama Anda</string>

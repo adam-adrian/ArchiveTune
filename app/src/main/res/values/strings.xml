@@ -1326,10 +1326,6 @@
     <string name="onboarding_error_open_permission">Couldn\'t open the permission request or Android settings.</string>
     <string name="you_might_like">You might like</string>
     <string name="refresh_suggestions">Refresh suggestions</string>
-    <string name="you_might_like_source">Playlist recommendation source</string>
-    <string name="playlist_suggestion_source_title">Playlist title</string>
-    <string name="playlist_suggestion_source_content">Playlist content</string>
-    <string name="playlist_suggestion_source_both">Playlist title and content</string>
     <string name="music_together">ArchiveTune Music Together</string>
     <string name="together_display_name">Display name</string>
     <string name="together_display_name_placeholder">Your name</string>

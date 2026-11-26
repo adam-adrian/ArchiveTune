@@ -949,10 +949,6 @@
     <string name="onboarding_community_telegram_title">加入 Telegram 频道/群组</string>
     <string name="onboarding_community_telegram_desc">与社区交流并获取最新动态</string>
     <string name="onboarding_community_donate_desc">捐赠以支持项目的持续开发</string>
-    <string name="you_might_like_source">歌单推荐依据</string>
-    <string name="playlist_suggestion_source_title">歌单标题</string>
-    <string name="playlist_suggestion_source_content">歌单曲目内容</string>
-    <string name="playlist_suggestion_source_both">歌单标题与曲目内容</string>
     <string name="together_current_playback">当前播放</string>
     <string name="together_playback_empty">暂未播放任何音乐</string>
     <string name="together_playback_playing">播放中</string>

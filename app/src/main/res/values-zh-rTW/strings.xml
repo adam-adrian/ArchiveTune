@@ -791,10 +791,6 @@
     <string name="onboarding_community_donate_desc">支援持續開發。</string>
     <string name="you_might_like">您可能喜歡</string>
     <string name="refresh_suggestions">刷新建議</string>
-    <string name="you_might_like_source">播放清單推薦來源</string>
-    <string name="playlist_suggestion_source_title">播放清單標題</string>
-    <string name="playlist_suggestion_source_content">播放清單內容</string>
-    <string name="playlist_suggestion_source_both">播放清單標題與內容</string>
     <string name="music_together">ArchiveTune 音樂共賞</string>
     <string name="together_display_name">顯示名稱</string>
     <string name="together_display_name_placeholder">您的姓名</string>

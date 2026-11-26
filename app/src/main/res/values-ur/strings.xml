@@ -914,10 +914,6 @@
     <string name="onboarding_community_donate_desc">تعمیر کی تائِید کریں۔</string>
     <string name="you_might_like">آپ کو پسند آ سکتا ہے</string>
     <string name="refresh_suggestions">تجویزوں کو تازہ کریں</string>
-    <string name="you_might_like_source">مجموعہ گیت کی شفاعات مخرج</string>
-    <string name="playlist_suggestion_source_title">مجموعہ گیت کا نام</string>
-    <string name="playlist_suggestion_source_content">مجموعہ گیت کا مواد</string>
-    <string name="playlist_suggestion_source_both">مجموعہ گیت کا مواد و نام</string>
     <string name="music_together">ArchiveTune Music Together</string>
     <string name="together_display_name">نمودار نام</string>
     <string name="together_display_name_placeholder">آپکا نام</string>
