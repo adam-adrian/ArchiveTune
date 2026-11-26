@@ -193,6 +193,10 @@ class QueueViewModel @Inject constructor(
                 order.add(target, order.removeAt(source))
                 edit.move(action.from, order.getOrNull(target - 1))
             }
+            is QueueAction.Move -> {
+                if (model.locked) return
+                edit.move(action.id, action.afterId)
+            }
             QueueAction.Retry -> edit.refresh(force = true)
         }
     }

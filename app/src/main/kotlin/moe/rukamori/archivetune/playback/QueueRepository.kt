@@ -189,6 +189,7 @@ class QueueRepository @Inject constructor(@ApplicationContext private val contex
         val anchor = if (after == null) -1 else reordered.indexOfFirst { key(it) == after }
         if (after != null && anchor < 0) return
         val target = anchor + 1
+        if (target == source) return
         reordered.add(target, item)
         if (connection.player.shuffleModeEnabled) {
             connection.localPlayer.setShuffleOrder(DefaultShuffleOrder(reordered.map { it.firstPeriodIndex }.toIntArray(), System.currentTimeMillis()))
