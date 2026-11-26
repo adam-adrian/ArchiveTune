@@ -23,10 +23,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -59,7 +61,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -83,6 +88,7 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import com.materialkolor.ktx.toColor
 import com.materialkolor.ktx.toHct
+import kotlinx.coroutines.delay
 import moe.rukamori.archivetune.R
 import moe.rukamori.archivetune.utils.joinByBullet
 import sh.calvin.reorderable.DragGestureDetector
@@ -137,13 +143,7 @@ fun QueueScreen(
     BackHandler(enabled = visible && model.selectionCount > 0) { onAction(QueueAction.ClearSelection) }
     BoxWithConstraints(modifier.fillMaxSize().background(background)) {
         val scrollingHeader = maxHeight < 560.dp || LocalDensity.current.fontScale >= 1.5f
-        val currentIndex = remember(model.entries) { model.entries.values.indexOfFirst { it.current } }
         val listState = rememberLazyListState()
-        val reorderable = rememberReorderableLazyListState(listState) { from, to ->
-            val source = from.key as? String
-            val target = to.key as? String
-            if (source != null && target != null) onAction(QueueAction.Drag(source, target))
-        }
         LaunchedEffect(visible) {
             if (visible) {
                 val index = model.entries.values.indexOfFirst { it.current }
@@ -161,6 +161,102 @@ fun QueueScreen(
                 }
             },
         ) { padding ->
+            val bottomPadding = padding.calculateBottomPadding()
+            val navBarBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            val toolbarOverlayBottom = (bottomPadding - navBarBottomPadding).coerceAtLeast(0.dp)
+            val scrollThresholdPadding = remember(toolbarOverlayBottom) { PaddingValues(bottom = toolbarOverlayBottom) }
+            var dragGestureActive by remember { mutableStateOf(false) }
+            var dragOrder by remember { mutableStateOf<List<String>?>(null) }
+            var draggedId by remember { mutableStateOf<String?>(null) }
+            var pendingCommit by remember { mutableStateOf<PendingQueueMove?>(null) }
+            val commitToken = remember { longArrayOf(0L) }
+            val displayEntries = remember(model.entries, dragOrder) {
+                reconcileQueueOrder(model.entries.values, dragOrder)
+            }
+            val currentIndex = remember(displayEntries) { displayEntries.indexOfFirst { it.current } }
+            val reorderable = rememberReorderableLazyListState(
+                lazyListState = listState,
+                scrollThresholdPadding = scrollThresholdPadding,
+            ) { from, to ->
+                val source = from.key as? String ?: return@rememberReorderableLazyListState
+                val target = to.key as? String ?: return@rememberReorderableLazyListState
+                if (model.locked || source == target) return@rememberReorderableLazyListState
+                val order = reconcileQueueOrder(model.entries.values, dragOrder).mapTo(mutableListOf()) { it.id }
+                val sourceIndex = order.indexOf(source)
+                val targetIndex = order.indexOf(target)
+                if (sourceIndex < 0 || targetIndex < 0 || sourceIndex == targetIndex) return@rememberReorderableLazyListState
+                order.add(targetIndex, order.removeAt(sourceIndex))
+                draggedId = source
+                dragOrder = order
+            }
+            val onDragStartedState = rememberUpdatedState {
+                dragGestureActive = true
+            }
+            val commitDragState = rememberUpdatedState {
+                dragGestureActive = false
+                val id = draggedId
+                val order = dragOrder
+                draggedId = null
+                if (id == null || order == null) return@rememberUpdatedState
+                if (model.locked) {
+                    dragOrder = null
+                    pendingCommit = null
+                    return@rememberUpdatedState
+                }
+                val liveIds = model.entries.values.map { it.id }
+                val finalOrder = reconcileQueueOrder(model.entries.values, order).map { it.id }
+                val index = finalOrder.indexOf(id)
+                if (index < 0) {
+                    dragOrder = null
+                    pendingCommit = null
+                    return@rememberUpdatedState
+                }
+                if (pendingCommit == null && finalOrder == liveIds) {
+                    dragOrder = null
+                    return@rememberUpdatedState
+                }
+                val afterId = finalOrder.getOrNull(index - 1)
+                val nextToken = ++commitToken[0]
+                pendingCommit = PendingQueueMove(
+                    id = id,
+                    expectedOrder = finalOrder,
+                    baselineEntries = if (finalOrder == liveIds) model.entries else null,
+                    token = nextToken,
+                )
+                onAction(QueueAction.Move(id, afterId))
+            }
+            LaunchedEffect(model.locked, visible) {
+                if (model.locked || !visible) {
+                    dragGestureActive = false
+                    draggedId = null
+                    dragOrder = null
+                    pendingCommit = null
+                }
+            }
+            LaunchedEffect(model.shuffle) {
+                draggedId = null
+                dragOrder = null
+                pendingCommit = null
+            }
+            LaunchedEffect(model.entries, dragGestureActive, pendingCommit) {
+                val pending = pendingCommit ?: return@LaunchedEffect
+                if (dragGestureActive || draggedId != null) return@LaunchedEffect
+                if (pending.baselineEntries != null && model.entries == pending.baselineEntries) return@LaunchedEffect
+                val liveIds = model.entries.values.map { it.id }
+                if (pending.id !in liveIds || liveIds.matchesExpectedOrder(pending.expectedOrder)) {
+                    pendingCommit = null
+                    dragOrder = null
+                }
+            }
+            LaunchedEffect(pendingCommit?.token, dragGestureActive, draggedId != null) {
+                val pending = pendingCommit ?: return@LaunchedEffect
+                if (dragGestureActive || draggedId != null) return@LaunchedEffect
+                delay(PendingMoveFallbackMs)
+                if (pendingCommit?.token == pending.token && !dragGestureActive && draggedId == null) {
+                    pendingCommit = null
+                    dragOrder = null
+                }
+            }
             Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
                 QueueHeader(model, onAction, headerModifier, showPlaybackControls = !scrollingHeader)
                 if (!scrollingHeader) {
@@ -169,10 +265,11 @@ fun QueueScreen(
                 }
                 LazyColumn(
                     state = listState,
+                    userScrollEnabled = !dragGestureActive,
                     contentPadding = PaddingValues(
                         start = 16.dp,
                         end = 16.dp,
-                        bottom = padding.calculateBottomPadding() + 32.dp,
+                        bottom = bottomPadding + 32.dp,
                     ),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                     modifier = Modifier.weight(1f).navigationBarsPadding(),
@@ -186,11 +283,10 @@ fun QueueScreen(
                             }
                         }
                     }
-                    itemsIndexed(model.entries.values, key = { _, row -> row.id }, contentType = { _, row -> if (row.current) "queue_current" else "queue_song" }) { index, entry ->
+                    itemsIndexed(displayEntries, key = { _, row -> row.id }, contentType = { _, row -> if (row.current) "queue_current" else "queue_song" }) { index, entry ->
                         ReorderableItem(
                             reorderable,
                             key = entry.id,
-                            modifier = Modifier.padding(vertical = if (entry.current) 4.dp else 0.dp),
                         ) { dragging ->
                             val swipe = rememberSwipeToDismissBoxState(positionalThreshold = { it * 0.8f })
                             LaunchedEffect(swipe.currentValue) {
@@ -199,9 +295,11 @@ fun QueueScreen(
                             val handle = Modifier.draggableHandle(
                                 enabled = !model.locked,
                                 dragGestureDetector = QueueDragGestureDetector,
+                                onDragStarted = { onDragStartedState.value() },
+                                onDragStopped = { commitDragState.value() },
                             )
-                            val previousId = model.entries.values.getOrNull(index - 1)?.id
-                            val nextId = model.entries.values.getOrNull(index + 1)?.id
+                            val previousId = displayEntries.getOrNull(index - 1)?.id
+                            val nextId = displayEntries.getOrNull(index + 1)?.id
                             val playing = entry.current && model.playing
                             val liked = entry.current && model.liked
                             val selecting = model.selectionCount > 0
@@ -215,13 +313,14 @@ fun QueueScreen(
                             }
                             val groupCount = when {
                                 entry.current -> 1
-                                currentIndex < 0 -> model.entries.values.size
+                                currentIndex < 0 -> displayEntries.size
                                 index < currentIndex -> currentIndex
-                                else -> model.entries.values.size - currentIndex - 1
+                                else -> displayEntries.size - currentIndex - 1
                             }
                             SwipeToDismissBox(
                                 state = swipe,
-                                gesturesEnabled = !model.locked && !selecting && !reorderable.isAnyItemDragging,
+                                modifier = Modifier.padding(vertical = if (entry.current) 4.dp else 0.dp),
+                                gesturesEnabled = !model.locked && !selecting && !dragGestureActive,
                                 backgroundContent = {
                                     if (swipe.dismissDirection != SwipeToDismissBoxValue.Settled) {
                                         Box(
@@ -246,6 +345,42 @@ fun QueueScreen(
             }
         }
     }
+}
+
+private const val PendingMoveFallbackMs = 1_000L
+
+private data class PendingQueueMove(
+    val id: String,
+    val expectedOrder: List<String>,
+    val baselineEntries: QueueEntries?,
+    val token: Long,
+)
+
+private fun reconcileQueueOrder(
+    rows: List<QueueEntryUi>,
+    dragOrder: List<String>?,
+): List<QueueEntryUi> {
+    val order = dragOrder ?: return rows
+    val byId = rows.associateBy { it.id }
+    val ordered = ArrayList<QueueEntryUi>(rows.size)
+    val seen = HashSet<String>(rows.size)
+    for (id in order) {
+        val entry = byId[id] ?: continue
+        if (seen.add(id)) ordered.add(entry)
+    }
+    for (entry in rows) {
+        if (seen.add(entry.id)) ordered.add(entry)
+    }
+    return ordered
+}
+
+private fun List<String>.matchesExpectedOrder(expected: List<String>): Boolean {
+    val liveSet = toHashSet()
+    val expectedPresent = expected.filter { it in liveSet }
+    if (expectedPresent.isEmpty()) return true
+    val expectedSet = expectedPresent.toHashSet()
+    val livePresent = filter { it in expectedSet }
+    return livePresent == expectedPresent
 }
 
 @Immutable
