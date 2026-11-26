@@ -75,11 +75,13 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.LaunchedEffect
@@ -787,7 +789,9 @@ fun StyledPlaybackSlider(
     activeColor: Color,
     isPlaying: Boolean,
     modifier: Modifier = Modifier,
+    isPreview: Boolean = false,
 ) {
+    val currentValue by rememberUpdatedState(value)
     when (sliderStyle) {
         SliderStyle.Standard -> {
             Slider(
@@ -801,28 +805,32 @@ fun StyledPlaybackSlider(
         }
 
         SliderStyle.Wavy -> {
-            val sliderState =
-                rememberControlledSliderState(
-                    value = value,
-                    valueRange = valueRange,
-                )
-            Slider(
-                state = sliderState,
-                onValueChange = { updated ->
-                    sliderState.value = updated
-                    onValueChange(updated)
-                },
+            val colors = PlayerSliderColors.wavySliderColors(activeColor)
+            val wavyModifier = if (isPreview) modifier else modifier.height(36.dp)
+            WavySliderExpressive(
+                value = { currentValue },
+                valueRange = valueRange,
+                onValueChange = onValueChange,
                 onValueChangeFinished = onValueChangeFinished,
-                colors = PlayerSliderColors.wavySliderColors(activeColor),
-                thumb = { Spacer(modifier = Modifier.size(0.dp)) },
-                track = { sliderState ->
-                    PlayerSliderTrack(
-                        sliderState = sliderState,
-                        colors = PlayerSliderColors.wavySliderColors(activeColor),
-                        trackHeight = if (isPlaying) 6.dp else 3.dp,
-                    )
-                },
-                modifier = modifier,
+                activeTrackColor = colors.activeTrackColor,
+                inactiveTrackColor = colors.inactiveTrackColor,
+                thumbColor = colors.thumbColor,
+                isPlaying = isPlaying,
+                showThumb = false,
+                strokeWidth = if (isPreview) 3.dp else 5.dp,
+                wavelength =
+                    if (isPreview) {
+                        14.dp
+                    } else {
+                        WavyProgressIndicatorDefaults.LinearDeterminateWavelength
+                    },
+                waveSpeed =
+                    if (isPreview) {
+                        7.dp
+                    } else {
+                        WavyProgressIndicatorDefaults.LinearDeterminateWavelength / 2f
+                    },
+                modifier = wavyModifier,
             )
         }
 
@@ -853,20 +861,33 @@ fun StyledPlaybackSlider(
         }
 
         SliderStyle.Circular -> {
-            val sliderState =
-                rememberControlledSliderState(
-                    value = value,
-                    valueRange = valueRange,
-                )
-            Slider(
-                state = sliderState,
-                onValueChange = { updated ->
-                    sliderState.value = updated
-                    onValueChange(updated)
-                },
+            val colors = PlayerSliderColors.circularSliderColors(activeColor)
+            val circularModifier = if (isPreview) modifier else modifier.height(36.dp)
+            WavySliderExpressive(
+                value = { currentValue },
+                valueRange = valueRange,
+                onValueChange = onValueChange,
                 onValueChangeFinished = onValueChangeFinished,
-                colors = PlayerSliderColors.circularSliderColors(activeColor),
-                modifier = modifier,
+                activeTrackColor = colors.activeTrackColor,
+                inactiveTrackColor = colors.inactiveTrackColor,
+                thumbColor = colors.thumbColor,
+                isPlaying = isPlaying,
+                showThumb = true,
+                strokeWidth = if (isPreview) 3.dp else 5.dp,
+                thumbRadius = if (isPreview) 5.dp else 8.dp,
+                wavelength =
+                    if (isPreview) {
+                        14.dp
+                    } else {
+                        WavyProgressIndicatorDefaults.LinearDeterminateWavelength
+                    },
+                waveSpeed =
+                    if (isPreview) {
+                        7.dp
+                    } else {
+                        WavyProgressIndicatorDefaults.LinearDeterminateWavelength / 2f
+                    },
+                modifier = circularModifier,
             )
         }
 
