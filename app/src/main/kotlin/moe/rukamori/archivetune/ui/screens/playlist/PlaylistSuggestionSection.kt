@@ -83,6 +83,29 @@ fun PlaylistSuggestionsSection(
     val currentSuggestions = playlistSuggestions
     if (currentSuggestions == null && !isLoading) return
 
+    val addSongAndNotify: suspend (SongItem) -> Unit = { song ->
+        val browseId =
+            viewModel.playlist.value
+                ?.playlist
+                ?.browseId
+        val success = viewModel.addSongToPlaylist(song = song, browseId = browseId)
+        if (success) {
+            val playlistName =
+                viewModel.playlist.value
+                    ?.playlist
+                    ?.name
+            val message =
+                if (playlistName != null) {
+                    context.getString(R.string.added_to_playlist, playlistName)
+                } else {
+                    context.getString(R.string.add_to_playlist)
+                }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, R.string.error_unknown, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // Duplicate Check Dialog
     if (showDuplicateDialog && songToCheck != null) {
         val song = songToCheck!!
@@ -104,27 +127,7 @@ fun PlaylistSuggestionsSection(
                             addingSongIds = addingSongIds + song.id
                             coroutineScope.launch {
                                 try {
-                                    val browseId =
-                                        viewModel.playlist.value
-                                            ?.playlist
-                                            ?.browseId
-                                    val success = viewModel.addSongToPlaylist(song, browseId)
-
-                                    if (success) {
-                                        val playlistName =
-                                            viewModel.playlist.value
-                                                ?.playlist
-                                                ?.name
-                                        val message =
-                                            if (playlistName != null) {
-                                                context.getString(R.string.added_to_playlist, playlistName)
-                                            } else {
-                                                context.getString(R.string.add_to_playlist)
-                                            }
-                                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        Toast.makeText(context, R.string.error_unknown, Toast.LENGTH_SHORT).show()
-                                    }
+                                    addSongAndNotify(song)
                                 } finally {
                                     addingSongIds = addingSongIds - song.id
                                 }
@@ -224,31 +227,7 @@ fun PlaylistSuggestionsSection(
                                                 songToCheck = songItem
                                                 showDuplicateDialog = true
                                             } else {
-                                                val browseId =
-                                                    viewModel.playlist.value
-                                                        ?.playlist
-                                                        ?.browseId
-                                                val success =
-                                                    viewModel.addSongToPlaylist(
-                                                        song = songItem,
-                                                        browseId = browseId,
-                                                    )
-
-                                                if (success) {
-                                                    val playlistName =
-                                                        viewModel.playlist.value
-                                                            ?.playlist
-                                                            ?.name
-                                                    val message =
-                                                        if (playlistName != null) {
-                                                            context.getString(R.string.added_to_playlist, playlistName)
-                                                        } else {
-                                                            context.getString(R.string.add_to_playlist)
-                                                        }
-                                                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    Toast.makeText(context, R.string.error_unknown, Toast.LENGTH_SHORT).show()
-                                                }
+                                                addSongAndNotify(songItem)
                                             }
                                         } finally {
                                             addingSongIds = addingSongIds - songItem.id
