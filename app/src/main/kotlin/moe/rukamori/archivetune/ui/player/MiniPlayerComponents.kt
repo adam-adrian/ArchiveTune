@@ -52,7 +52,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -121,7 +120,6 @@ fun SwipeableMiniPlayerBox(
 ) {
     val offsetXAnimatable = remember { Animatable(0f) }
     var dragStartTime by remember { mutableStateOf(0L) }
-    var totalDragDistance by remember { mutableFloatStateOf(0f) }
 
     val view = LocalView.current
     val (enableHapticFeedback) = rememberPreference(EnableHapticFeedbackKey, true)
@@ -178,11 +176,15 @@ fun SwipeableMiniPlayerBox(
                         }
                     }.let { baseModifier ->
                         if (swipeThumbnail) {
-                            baseModifier.pointerInput(Unit) {
+                            baseModifier.pointerInput(
+                                playerConnection,
+                                layoutDirection,
+                                swipeSensitivity,
+                                enableHapticFeedback,
+                            ) {
                                 detectHorizontalDragGestures(
                                     onDragStart = {
                                         dragStartTime = System.currentTimeMillis()
-                                        totalDragDistance = 0f
                                     },
                                     onDragCancel = {
                                         coroutineScope.launch {
@@ -197,54 +199,61 @@ fun SwipeableMiniPlayerBox(
                                             if (layoutDirection == LayoutDirection.Rtl) -dragAmount else dragAmount
                                         val canSkipPrevious = playerConnection.player.previousMediaItemIndex != -1
                                         val canSkipNext = playerConnection.player.nextMediaItemIndex != -1
-                                        val allowLeft = adjustedDragAmount < 0 && canSkipNext
-                                        val allowRight = adjustedDragAmount > 0 && canSkipPrevious
-                                        if (allowLeft || allowRight) {
-                                            totalDragDistance += kotlin.math.abs(adjustedDragAmount)
-                                            coroutineScope.launch {
-                                                offsetXAnimatable.snapTo(offsetXAnimatable.value + adjustedDragAmount)
+                                        val minOffset = if (canSkipNext) Float.NEGATIVE_INFINITY else 0f
+                                        val maxOffset = if (canSkipPrevious) Float.POSITIVE_INFINITY else 0f
+                                        coroutineScope.launch {
+                                            val currentOffset = offsetXAnimatable.value
+                                            val targetOffset =
+                                                (currentOffset + adjustedDragAmount).coerceIn(minOffset, maxOffset)
+                                            if (targetOffset != currentOffset) {
+                                                offsetXAnimatable.snapTo(targetOffset)
                                             }
                                         }
                                     },
                                     onDragEnd = {
                                         val dragDuration = System.currentTimeMillis() - dragStartTime
-                                        val velocity = if (dragDuration > 0) totalDragDistance / dragDuration else 0f
-                                        val currentOffset = offsetXAnimatable.value
-
-                                        val minDistanceThreshold = 50f
-                                        val velocityThreshold = (swipeSensitivity * -8.25f) + 8.5f
-
-                                        val shouldChangeSong =
-                                            (
-                                                kotlin.math.abs(currentOffset) > minDistanceThreshold &&
-                                                    velocity > velocityThreshold
-                                            ) || (kotlin.math.abs(currentOffset) > autoSwipeThreshold)
-
-                                        if (shouldChangeSong) {
-                                            val isRightSwipe = currentOffset > 0
-                                            val canSkipPrevious = playerConnection.player.previousMediaItemIndex != -1
-                                            val canSkipNext = playerConnection.player.nextMediaItemIndex != -1
-
-                                            if (isRightSwipe && canSkipPrevious) {
-                                                if (enableHapticFeedback) {
-                                                    view.performHapticFeedback(
-                                                        android.view.HapticFeedbackConstants.CONTEXT_CLICK,
-                                                        android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING,
-                                                    )
-                                                }
-                                                playerConnection.player.seekToPreviousMediaItem()
-                                            } else if (!isRightSwipe && canSkipNext) {
-                                                if (enableHapticFeedback) {
-                                                    view.performHapticFeedback(
-                                                        android.view.HapticFeedbackConstants.CONTEXT_CLICK,
-                                                        android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING,
-                                                    )
-                                                }
-                                                playerConnection.player.seekToNext()
-                                            }
-                                        }
-
                                         coroutineScope.launch {
+                                            val currentOffset = offsetXAnimatable.value
+                                            val velocity =
+                                                if (dragDuration > 0) {
+                                                    currentOffset.absoluteValue / dragDuration
+                                                } else {
+                                                    0f
+                                                }
+
+                                            val minDistanceThreshold = 50f
+                                            val velocityThreshold = (swipeSensitivity * -8.25f) + 8.5f
+
+                                            val shouldChangeSong =
+                                                (
+                                                    currentOffset.absoluteValue > minDistanceThreshold &&
+                                                        velocity > velocityThreshold
+                                                ) || (currentOffset.absoluteValue > autoSwipeThreshold)
+
+                                            if (shouldChangeSong) {
+                                                val isRightSwipe = currentOffset > 0
+                                                val canSkipPrevious = playerConnection.player.previousMediaItemIndex != -1
+                                                val canSkipNext = playerConnection.player.nextMediaItemIndex != -1
+
+                                                if (isRightSwipe && canSkipPrevious) {
+                                                    if (enableHapticFeedback) {
+                                                        view.performHapticFeedback(
+                                                            android.view.HapticFeedbackConstants.CONTEXT_CLICK,
+                                                            android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING,
+                                                        )
+                                                    }
+                                                    playerConnection.player.seekToPreviousMediaItem()
+                                                } else if (!isRightSwipe && canSkipNext) {
+                                                    if (enableHapticFeedback) {
+                                                        view.performHapticFeedback(
+                                                            android.view.HapticFeedbackConstants.CONTEXT_CLICK,
+                                                            android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING,
+                                                        )
+                                                    }
+                                                    playerConnection.player.seekToNext()
+                                                }
+                                            }
+
                                             offsetXAnimatable.animateTo(
                                                 targetValue = 0f,
                                                 animationSpec = animationSpec,
