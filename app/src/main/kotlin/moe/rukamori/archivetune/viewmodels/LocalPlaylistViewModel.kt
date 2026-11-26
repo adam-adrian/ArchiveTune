@@ -45,8 +45,6 @@ import moe.rukamori.archivetune.R
 import moe.rukamori.archivetune.constants.HideExplicitKey
 import moe.rukamori.archivetune.constants.HideVideoKey
 import moe.rukamori.archivetune.constants.PlaylistSongSortType
-import moe.rukamori.archivetune.constants.PlaylistSuggestionSource
-import moe.rukamori.archivetune.constants.PlaylistSuggestionSourceKey
 import moe.rukamori.archivetune.db.MusicDatabase
 import moe.rukamori.archivetune.db.entities.PlaylistSong
 import moe.rukamori.archivetune.extensions.reversed
@@ -55,13 +53,13 @@ import moe.rukamori.archivetune.innertube.YouTube
 import moe.rukamori.archivetune.innertube.models.SongItem
 import moe.rukamori.archivetune.models.PlaylistSuggestion
 import moe.rukamori.archivetune.models.toMediaMetadata
-import moe.rukamori.archivetune.playlist.PlaylistRecommendationPolicy
 import moe.rukamori.archivetune.playlist.PlaylistRecommendationRepository
 import moe.rukamori.archivetune.playlist.PlaylistRecommendationRequest
 import moe.rukamori.archivetune.playlist.RemovePlaylistCoverUseCase
 import moe.rukamori.archivetune.playlist.UpdatePlaylistCoverUseCase
 import moe.rukamori.archivetune.utils.SyncUtils
 import moe.rukamori.archivetune.utils.dataStore
+import moe.rukamori.archivetune.utils.isLocalMediaId
 import moe.rukamori.archivetune.utils.reportException
 import java.text.Collator
 import java.util.Locale
@@ -179,7 +177,7 @@ class LocalPlaylistViewModel
                         totalPages = 0,
                     )
                 }
-                val pageSize = PlaylistRecommendationPolicy.DEFAULT_PAGE_SIZE
+                val pageSize = PlaylistRecommendationRepository.DEFAULT_PAGE_SIZE
                 val totalPages = (available.size + pageSize - 1) / pageSize
                 val safePage = pageIndex.coerceIn(0, totalPages - 1)
                 val fromIndex = safePage * pageSize
@@ -198,7 +196,6 @@ class LocalPlaylistViewModel
         private var previouslyShownSuggestionIds = ArrayDeque<String>()
         private var viewedSuggestionIdsInCurrentPool = LinkedHashSet<String>()
         private var suggestionRadioContinuation: String? = null
-        private var suggestionTitlePlaylistOffset = 0
         private var suggestionLoadJob: Job? = null
         private var suggestionLoadGeneration = 0L
 
@@ -241,12 +238,11 @@ class LocalPlaylistViewModel
                 }
             }
 
-            // Auto-load suggestions once Room emits real playlist & songs, and react to setting/title/emptiness changes
+            // Auto-load suggestions once Room emits real playlist & songs, and react to filter/emptiness changes
             val suggestionPreferences =
                 context.dataStore.data
                     .map { preferences ->
                         SuggestionPreferences(
-                            source = preferences[PlaylistSuggestionSourceKey].toEnum(PlaylistSuggestionSource.BOTH),
                             hideExplicit = preferences[HideExplicitKey] ?: false,
                             hideVideos = preferences[HideVideoKey] ?: false,
                         )
@@ -259,8 +255,15 @@ class LocalPlaylistViewModel
                     suggestionPreferences,
                 ) { playlist, songs, prefs ->
                     if (playlist == null) return@combine null
+                    val hasYouTubeSongs =
+                        songs.any { playlistSong ->
+                            !playlistSong.song.song.isLocal &&
+                                !playlistSong.song.id.isLocalMediaId() &&
+                                !playlistSong.song.song.isPodcast &&
+                                playlistSong.song.id.length == PlaylistRecommendationRepository.YOUTUBE_VIDEO_ID_LENGTH
+                        }
                     val effectiveTitle =
-                        if (prefs.source == PlaylistSuggestionSource.PLAYLIST_CONTENT) {
+                        if (hasYouTubeSongs || !playlist.playlist.browseId.isNullOrBlank()) {
                             ""
                         } else {
                             playlist.playlist.name
@@ -271,7 +274,7 @@ class LocalPlaylistViewModel
                                 effectiveTitle = effectiveTitle,
                                 browseId = playlist.playlist.browseId,
                                 radioEndpointParams = playlist.playlist.radioEndpointParams,
-                                hasSongs = songs.isNotEmpty(),
+                                hasYouTubeSongs = hasYouTubeSongs,
                                 preferences = prefs,
                             ),
                         playlistName = playlist.playlist.name,
@@ -378,17 +381,7 @@ class LocalPlaylistViewModel
             playlistName: String,
             browseId: String?,
             songs: List<PlaylistSong>,
-            source: PlaylistSuggestionSource,
-        ): Boolean =
-            when (source) {
-                PlaylistSuggestionSource.PLAYLIST_CONTENT -> songs.isNotEmpty() || !browseId.isNullOrBlank()
-                PlaylistSuggestionSource.PLAYLIST_TITLE -> playlistName.isNotBlank()
-                PlaylistSuggestionSource.BOTH -> {
-                    songs.isNotEmpty() ||
-                        !browseId.isNullOrBlank() ||
-                        PlaylistRecommendationPolicy.isMeaningfulPlaylistTitle(playlistName)
-                }
-            }
+        ): Boolean = songs.isNotEmpty() || !browseId.isNullOrBlank() || playlistName.isNotBlank()
 
         private fun recordShownSuggestionIds(ids: Iterable<String>) {
             for (id in ids) {
@@ -417,7 +410,7 @@ class LocalPlaylistViewModel
             suggestionLoadJob?.cancel()
             val generation = ++suggestionLoadGeneration
 
-            if (!hasActiveSignals(playlistName, browseId, songs, preferences.source)) {
+            if (!hasActiveSignals(playlistName, browseId, songs)) {
                 _suggestionPool.value = null
                 _currentSuggestionPage.value = 0
                 _isLoadingSuggestions.value = false
@@ -426,7 +419,6 @@ class LocalPlaylistViewModel
                     usedSuggestionSeedIds = emptySet()
                     previouslyShownSuggestionIds.clear()
                     suggestionRadioContinuation = null
-                    suggestionTitlePlaylistOffset = 0
                 }
                 return
             }
@@ -438,7 +430,6 @@ class LocalPlaylistViewModel
                 previouslyShownSuggestionIds.clear()
                 viewedSuggestionIdsInCurrentPool.clear()
                 suggestionRadioContinuation = null
-                suggestionTitlePlaylistOffset = 0
             } else {
                 markCurrentPageViewed()
                 recordShownSuggestionIds(viewedSuggestionIdsInCurrentPool)
@@ -451,42 +442,46 @@ class LocalPlaylistViewModel
                     browseId = browseId,
                     radioEndpointParams = radioEndpointParams,
                     songs = songs,
-                    source = preferences.source,
                     usedSeedIds = usedSuggestionSeedIds,
                     previouslyShownIds = previouslyShownSuggestionIds.toSet(),
                     radioContinuation = suggestionRadioContinuation,
-                    titlePlaylistOffset = suggestionTitlePlaylistOffset,
                     hideExplicit = preferences.hideExplicit,
                     hideVideos = preferences.hideVideos,
                 )
 
             suggestionLoadJob =
                 viewModelScope.launch {
-                    try {
-                        val result = recommendationRepository.loadRecommendations(request)
-                        if (generation != suggestionLoadGeneration) return@launch
-                        usedSuggestionSeedIds = result.usedSeedIds
-                        suggestionRadioContinuation = result.nextRadioContinuation
-                        suggestionTitlePlaylistOffset = result.nextTitlePlaylistOffset
-                        viewedSuggestionIdsInCurrentPool.clear()
-                        result.items
-                            .take(PlaylistRecommendationPolicy.DEFAULT_PAGE_SIZE)
-                            .forEach { viewedSuggestionIdsInCurrentPool.add(it.id) }
-                        _currentSuggestionPage.value = 0
-                        _suggestionPool.value = result.items
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (e: Exception) {
-                        reportException(e)
-                        if (generation == suggestionLoadGeneration && _suggestionPool.value == null) {
-                            _suggestionPool.value = emptyList()
-                        }
-                    } finally {
-                        if (generation == suggestionLoadGeneration) {
-                            _isLoadingSuggestions.value = false
-                        }
-                    }
+                    fetchAndApplySuggestions(request = request, generation = generation)
                 }
+        }
+
+        private suspend fun fetchAndApplySuggestions(
+            request: PlaylistRecommendationRequest,
+            generation: Long,
+        ) {
+            try {
+                val result = recommendationRepository.loadRecommendations(request)
+                if (generation != suggestionLoadGeneration) return
+                usedSuggestionSeedIds = result.usedSeedIds
+                suggestionRadioContinuation = result.nextRadioContinuation
+                viewedSuggestionIdsInCurrentPool.clear()
+                result.items
+                    .take(PlaylistRecommendationRepository.DEFAULT_PAGE_SIZE)
+                    .forEach { viewedSuggestionIdsInCurrentPool.add(it.id) }
+                _currentSuggestionPage.value = 0
+                _suggestionPool.value = result.items
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                reportException(e)
+                if (generation == suggestionLoadGeneration && _suggestionPool.value == null) {
+                    _suggestionPool.value = emptyList()
+                }
+            } finally {
+                if (generation == suggestionLoadGeneration) {
+                    _isLoadingSuggestions.value = false
+                }
+            }
         }
 
         fun changeSuggestionPage(direction: Int) {
@@ -499,7 +494,7 @@ class LocalPlaylistViewModel
             if (targetPage != current.currentPage) {
                 _currentSuggestionPage.value = targetPage
                 val pool = _suggestionPool.value.orEmpty()
-                val pageSize = PlaylistRecommendationPolicy.DEFAULT_PAGE_SIZE
+                val pageSize = PlaylistRecommendationRepository.DEFAULT_PAGE_SIZE
                 val currentSongIds = playlistSongs.value.mapTo(HashSet()) { it.song.id }
                 val available = pool.filter { it.id !in currentSongIds }
                 val fromIndex = targetPage * pageSize
@@ -530,11 +525,10 @@ class LocalPlaylistViewModel
                         }
                         val prefs =
                             SuggestionPreferences(
-                                source = dataStorePrefs[PlaylistSuggestionSourceKey].toEnum(PlaylistSuggestionSource.BOTH),
                                 hideExplicit = dataStorePrefs[HideExplicitKey] ?: false,
                                 hideVideos = dataStorePrefs[HideVideoKey] ?: false,
                             )
-                        if (!hasActiveSignals(currentPlaylist.playlist.name, currentPlaylist.playlist.browseId, currentSongs, prefs.source)) {
+                        if (!hasActiveSignals(currentPlaylist.playlist.name, currentPlaylist.playlist.browseId, currentSongs)) {
                             _suggestionPool.value = null
                             _currentSuggestionPage.value = 0
                             return@launch
@@ -545,25 +539,13 @@ class LocalPlaylistViewModel
                                 browseId = currentPlaylist.playlist.browseId,
                                 radioEndpointParams = currentPlaylist.playlist.radioEndpointParams,
                                 songs = currentSongs,
-                                source = prefs.source,
                                 usedSeedIds = usedSuggestionSeedIds,
                                 previouslyShownIds = previouslyShownSuggestionIds.toSet(),
                                 radioContinuation = suggestionRadioContinuation,
-                                titlePlaylistOffset = suggestionTitlePlaylistOffset,
                                 hideExplicit = prefs.hideExplicit,
                                 hideVideos = prefs.hideVideos,
                             )
-                        val result = recommendationRepository.loadRecommendations(request)
-                        if (generation != suggestionLoadGeneration) return@launch
-                        usedSuggestionSeedIds = result.usedSeedIds
-                        suggestionRadioContinuation = result.nextRadioContinuation
-                        suggestionTitlePlaylistOffset = result.nextTitlePlaylistOffset
-                        viewedSuggestionIdsInCurrentPool.clear()
-                        result.items
-                            .take(PlaylistRecommendationPolicy.DEFAULT_PAGE_SIZE)
-                            .forEach { viewedSuggestionIdsInCurrentPool.add(it.id) }
-                        _currentSuggestionPage.value = 0
-                        _suggestionPool.value = result.items
+                        fetchAndApplySuggestions(request = request, generation = generation)
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (e: Exception) {
@@ -648,7 +630,6 @@ class LocalPlaylistViewModel
         }
 
         private data class SuggestionPreferences(
-            val source: PlaylistSuggestionSource,
             val hideExplicit: Boolean,
             val hideVideos: Boolean,
         )
@@ -657,7 +638,7 @@ class LocalPlaylistViewModel
             val effectiveTitle: String,
             val browseId: String?,
             val radioEndpointParams: String?,
-            val hasSongs: Boolean,
+            val hasYouTubeSongs: Boolean,
             val preferences: SuggestionPreferences,
         )
 

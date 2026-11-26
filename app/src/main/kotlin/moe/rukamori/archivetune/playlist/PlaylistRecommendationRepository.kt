@@ -15,36 +15,28 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import moe.rukamori.archivetune.constants.PlaylistSuggestionSource
 import moe.rukamori.archivetune.db.MusicDatabase
 import moe.rukamori.archivetune.db.entities.PlaylistSong
-import moe.rukamori.archivetune.db.entities.Song
 import moe.rukamori.archivetune.extensions.filterBlockedArtists
 import moe.rukamori.archivetune.innertube.YouTube
-import moe.rukamori.archivetune.innertube.models.Album
-import moe.rukamori.archivetune.innertube.models.Artist
-import moe.rukamori.archivetune.innertube.models.PlaylistItem
 import moe.rukamori.archivetune.innertube.models.SongItem
 import moe.rukamori.archivetune.innertube.models.WatchEndpoint
-import moe.rukamori.archivetune.innertube.models.WatchEndpoint.WatchEndpointMusicSupportedConfigs
-import moe.rukamori.archivetune.innertube.models.WatchEndpoint.WatchEndpointMusicSupportedConfigs.WatchEndpointMusicConfig
 import moe.rukamori.archivetune.innertube.models.filterExplicit
 import moe.rukamori.archivetune.innertube.models.filterVideo
 import moe.rukamori.archivetune.utils.isLocalMediaId
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.random.Random
 
 data class PlaylistRecommendationRequest(
     val playlistName: String,
     val browseId: String?,
     val radioEndpointParams: String?,
     val songs: List<PlaylistSong>,
-    val source: PlaylistSuggestionSource,
     val usedSeedIds: Set<String> = emptySet(),
     val previouslyShownIds: Set<String> = emptySet(),
     val radioContinuation: String? = null,
-    val titlePlaylistOffset: Int = 0,
     val hideExplicit: Boolean = false,
     val hideVideos: Boolean = false,
 )
@@ -53,7 +45,11 @@ data class PlaylistRecommendationResult(
     val items: List<SongItem>,
     val usedSeedIds: Set<String>,
     val nextRadioContinuation: String?,
-    val nextTitlePlaylistOffset: Int,
+)
+
+internal data class RecommendationSeed(
+    val id: String,
+    val artistKey: String,
 )
 
 @Singleton
@@ -67,287 +63,157 @@ class PlaylistRecommendationRepository
         ): PlaylistRecommendationResult =
             withContext(Dispatchers.IO) {
                 val blockedArtistIds = database.getBlockedArtistIds().toSet()
-                val hasSongs = request.songs.isNotEmpty()
                 val playlistSongIds = request.songs.mapTo(HashSet(request.songs.size)) { it.song.id }
-                val playlistSongSignatures =
-                    request.songs.mapTo(HashSet(request.songs.size)) { playlistSong ->
-                        PlaylistRecommendationPolicy.dedupSignature(
-                            title = playlistSong.song.title,
-                            primaryArtistName = playlistSong.song.artists.firstOrNull()?.name.orEmpty(),
-                            fallbackId = playlistSong.song.id,
+
+                fun filterSongs(items: List<SongItem>): List<SongItem> =
+                    items
+                        .filter { item ->
+                            item.id.length == YOUTUBE_VIDEO_ID_LENGTH &&
+                                item.id !in playlistSongIds &&
+                                !item.isPodcast &&
+                                item.title.isNotBlank() &&
+                                item.artists.isNotEmpty()
+                        }.filterBlockedArtists(blockedArtistIds)
+                        .filterExplicit(request.hideExplicit)
+                        .filterVideo(request.hideVideos)
+
+                var nextRadioContinuation = request.radioContinuation
+                var updatedUsedSeedIds = request.usedSeedIds
+                var candidates: List<SongItem> = emptyList()
+
+                // 1. Synced playlists: use YouTube's playlist radio (RDAMPL)
+                if (!request.browseId.isNullOrBlank()) {
+                    val radio =
+                        fetchPlaylistRadio(
+                            browseId = request.browseId,
+                            radioEndpointParams = request.radioEndpointParams,
+                            continuation = request.radioContinuation,
                         )
-                    }
-
-                // Never seed or boost artists from blocked-artist tracks, hidden videos, or hidden explicit tracks
-                val eligibleSeedSongs =
-                    request.songs.filter { playlistSong ->
-                        val hasBlockedArtist =
-                            playlistSong.song.artists.any { artist ->
-                                artist.blockedAt != null || artist.id in blockedArtistIds
-                            }
-                        !hasBlockedArtist &&
-                            (!request.hideVideos || !playlistSong.song.song.isMusicVideo) &&
-                            (!request.hideExplicit || !playlistSong.song.song.explicit)
-                    }
-                val seedCandidates = eligibleSeedSongs.map { it.toSeedCandidate() }
-                val playlistArtistKeys =
-                    eligibleSeedSongs
-                        .flatMap { it.song.artists }
-                        .mapTo(HashSet()) { artist ->
-                            artist.id.takeIf(String::isNotBlank) ?: artist.name.trim().lowercase(Locale.ROOT)
-                        }
-
-                val useContentSignals =
-                    when (request.source) {
-                        PlaylistSuggestionSource.PLAYLIST_CONTENT -> hasSongs || !request.browseId.isNullOrBlank()
-                        PlaylistSuggestionSource.PLAYLIST_TITLE -> false
-                        PlaylistSuggestionSource.BOTH -> hasSongs || !request.browseId.isNullOrBlank()
-                    }
-                val useTitleSignals =
-                    when (request.source) {
-                        PlaylistSuggestionSource.PLAYLIST_TITLE -> request.playlistName.isNotBlank()
-                        PlaylistSuggestionSource.PLAYLIST_CONTENT -> false
-                        PlaylistSuggestionSource.BOTH -> PlaylistRecommendationPolicy.isMeaningfulPlaylistTitle(request.playlistName)
-                    }
-
-                if (!useContentSignals && !useTitleSignals) {
-                    return@withContext PlaylistRecommendationResult(
-                        items = emptyList(),
-                        usedSeedIds = request.usedSeedIds,
-                        nextRadioContinuation = null,
-                        nextTitlePlaylistOffset = request.titlePlaylistOffset,
-                    )
-                }
-
-                val batches = mutableListOf<RecommendationBatch>()
-                val newlyUsedSeedIds = mutableSetOf<String>()
-                var selectedYouTubeSeedIds: List<String> = emptyList()
-                var usedLocalFallback = false
-                var nextRadioContinuation: String? = request.radioContinuation
-                var nextTitleOffset = request.titlePlaylistOffset
-
-                coroutineScope {
-                    val semaphore = Semaphore(permits = MAX_CONCURRENT_REQUESTS)
-
-                    val radioDeferred =
-                        if (useContentSignals && !request.browseId.isNullOrBlank()) {
-                            async {
-                                semaphore.withPermit {
-                                    fetchPlaylistRadio(
-                                        browseId = request.browseId,
-                                        radioEndpointParams = request.radioEndpointParams,
-                                        continuation = request.radioContinuation,
-                                    )
-                                }
-                            }
-                        } else {
-                            null
-                        }
-
-                    val selectedSeeds =
-                        if (useContentSignals) {
-                            val seedCount =
-                                if (!request.browseId.isNullOrBlank()) {
-                                    SEEDS_WITH_SYNCED_RADIO
-                                } else {
-                                    SEEDS_FOR_LOCAL_PLAYLIST
-                                }
-                            PlaylistRecommendationPolicy.selectSeeds(
-                                candidates = seedCandidates,
-                                maxSeeds = seedCount,
-                                excludedSeedIds = request.usedSeedIds,
+                    nextRadioContinuation = radio.nextContinuation
+                    val filteredRadio = filterSongs(radio.items)
+                    if (filteredRadio.isNotEmpty()) {
+                        candidates =
+                            mergeSuggestionLists(
+                                lists = listOf(filteredRadio),
+                                previouslyShownIds = request.previouslyShownIds,
+                                maxPoolSize = MAX_POOL_SIZE,
                             )
-                        } else {
-                            emptyList()
-                        }
-
-                    selectedYouTubeSeedIds = selectedSeeds.map { it.id }
-                    newlyUsedSeedIds.addAll(selectedYouTubeSeedIds)
-
-                    val seedBatchesDeferred =
-                        selectedSeeds.map { seed ->
-                            async {
-                                semaphore.withPermit {
-                                    fetchSeedBatches(seed.id)
-                                }
-                            }
-                        }
-
-                    val localFallbackDeferred =
-                        if (useContentSignals && selectedSeeds.isEmpty() && request.browseId.isNullOrBlank() && hasSongs) {
-                            usedLocalFallback = true
-                            val localQueries =
-                                PlaylistRecommendationPolicy.selectLocalSearchQueries(
-                                    candidates = seedCandidates,
-                                    maxQueries = LOCAL_FALLBACK_QUERY_LIMIT,
-                                    excludedSeedIds = request.usedSeedIds,
-                                )
-                            newlyUsedSeedIds.addAll(localQueries.map { it.first })
-                            localQueries.map { (seedId, query) ->
-                                async {
-                                    semaphore.withPermit {
-                                        val songs = searchSongs(query)
-                                        if (songs.isNotEmpty()) {
-                                            RecommendationBatch(
-                                                kind = RecommendationBatchKind.LOCAL_FALLBACK,
-                                                sourceKey = "local:$seedId",
-                                                items = songs,
-                                            )
-                                        } else {
-                                            null
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            emptyList()
-                        }
-
-                    val titleDeferred =
-                        if (useTitleSignals) {
-                            val maxPlaylistsToFetch =
-                                if (useContentSignals) {
-                                    TITLE_PLAYLISTS_IN_BOTH
-                                } else {
-                                    TITLE_PLAYLISTS_ONLY
-                                }
-                            async {
-                                semaphore.withPermit {
-                                    fetchTitleBatches(
-                                        playlistName = request.playlistName,
-                                        ownBrowseId = request.browseId,
-                                        offset = request.titlePlaylistOffset,
-                                        maxPlaylists = maxPlaylistsToFetch,
-                                    )
-                                }
-                            }
-                        } else {
-                            null
-                        }
-
-                    radioDeferred?.await()?.let { radio ->
-                        nextRadioContinuation = radio.nextContinuation
-                        if (radio.items.isNotEmpty()) {
-                            batches.add(
-                                RecommendationBatch(
-                                    kind = RecommendationBatchKind.PLAYLIST_RADIO,
-                                    sourceKey = "playlist_radio",
-                                    items = radio.items,
-                                ),
-                            )
-                        }
-                    }
-
-                    seedBatchesDeferred.awaitAll().forEach { batches.addAll(it) }
-                    localFallbackDeferred.awaitAll().filterNotNull().forEach { batches.add(it) }
-
-                    titleDeferred?.await()?.let { titleResult ->
-                        nextTitleOffset = titleResult.nextOffset
-                        batches.addAll(titleResult.batches)
                     }
                 }
 
-                // Enrich with cached Room related songs only for valid YouTube seeds when online content is sparse
-                if (useContentSignals && !usedLocalFallback) {
-                    val onlineContentCount =
-                        batches
+                // 2. Local playlists (or empty RDAMPL): pull radio from a few songs in the playlist
+                if (candidates.isEmpty()) {
+                    val eligibleSeeds =
+                        request.songs
                             .asSequence()
-                            .filterNot { it.kind.isTitleSourced }
-                            .sumOf { it.items.size }
-                    if (onlineContentCount < SPARSE_CONTENT_THRESHOLD) {
-                        val cachedSeedIds =
-                            selectedYouTubeSeedIds
-                                .ifEmpty {
-                                    seedCandidates
-                                        .filter { !it.isLocal && !it.isPodcast && it.isYouTubeId }
-                                        .take(SEEDS_FOR_LOCAL_PLAYLIST)
-                                        .map { it.id }
-                                }
-                        cachedSeedIds.forEach { seedId ->
-                            val cachedSongs =
-                                database
-                                    .relatedSongs(seedId)
-                                    .filter { related ->
-                                        !related.song.isLocal &&
-                                            !related.song.isPodcast &&
-                                            related.id.length == PlaylistRecommendationPolicy.YOUTUBE_VIDEO_ID_LENGTH &&
-                                            (!request.hideVideos || !related.song.isMusicVideo) &&
-                                            (!request.hideExplicit || !related.song.explicit)
-                                    }.map { it.toSongItem() }
-                            if (cachedSongs.isNotEmpty()) {
-                                batches.add(
-                                    RecommendationBatch(
-                                        kind = RecommendationBatchKind.CACHED_RELATED,
-                                        sourceKey = "seed:$seedId",
-                                        items = cachedSongs,
-                                    ),
-                                )
+                            .filter { playlistSong ->
+                                val song = playlistSong.song
+                                val hasBlockedArtist =
+                                    song.artists.any { artist ->
+                                        artist.blockedAt != null || artist.id in blockedArtistIds
+                                    }
+                                !song.song.isLocal &&
+                                    !song.id.isLocalMediaId() &&
+                                    !song.song.isPodcast &&
+                                    song.id.length == YOUTUBE_VIDEO_ID_LENGTH &&
+                                    !hasBlockedArtist &&
+                                    (!request.hideVideos || !song.song.isMusicVideo) &&
+                                    (!request.hideExplicit || !song.song.explicit)
+                            }.map { playlistSong ->
+                                val primaryArtist = playlistSong.song.artists.firstOrNull()
+                                val artistKey =
+                                    primaryArtist?.id?.takeIf(String::isNotBlank)
+                                        ?: primaryArtist?.name?.trim()?.lowercase(Locale.ROOT).orEmpty()
+                                RecommendationSeed(id = playlistSong.song.id, artistKey = artistKey)
+                            }.distinctBy { it.id }
+                            .toList()
+
+                    val pickedSeeds =
+                        selectRecommendationSeeds(
+                            candidates = eligibleSeeds,
+                            maxSeeds = SEED_COUNT,
+                            usedSeedIds = request.usedSeedIds,
+                        )
+
+                    if (pickedSeeds.isNotEmpty()) {
+                        val pickedIds = pickedSeeds.mapTo(HashSet(pickedSeeds.size)) { it.id }
+                        val allEligibleIds = eligibleSeeds.mapTo(HashSet(eligibleSeeds.size)) { it.id }
+                        val combinedUsed = request.usedSeedIds + pickedIds
+                        updatedUsedSeedIds =
+                            if (combinedUsed.containsAll(allEligibleIds)) {
+                                pickedIds
+                            } else {
+                                combinedUsed
                             }
+
+                        val perSeedLists =
+                            coroutineScope {
+                                val semaphore = Semaphore(permits = SEED_COUNT)
+                                pickedSeeds
+                                    .map { seed ->
+                                        async {
+                                            semaphore.withPermit {
+                                                val items =
+                                                    YouTube
+                                                        .next(
+                                                            WatchEndpoint(
+                                                                videoId = seed.id,
+                                                                playlistId = "RDAMVM${seed.id}",
+                                                            ),
+                                                        ).getOrNullPreservingCancellation()
+                                                        ?.items
+                                                        .orEmpty()
+                                                filterSongs(items)
+                                            }
+                                        }
+                                    }.awaitAll()
+                                    .filter { it.isNotEmpty() }
+                            }
+
+                        if (perSeedLists.isNotEmpty()) {
+                            candidates =
+                                mergeSuggestionLists(
+                                    lists = perSeedLists,
+                                    previouslyShownIds = request.previouslyShownIds,
+                                    maxPoolSize = MAX_POOL_SIZE,
+                                )
                         }
                     }
                 }
 
-                val filteredBatches =
-                    batches.map { batch ->
-                        val filtered =
-                            batch.items
-                                .filterBlockedArtists(blockedArtistIds)
-                                .filterExplicit(request.hideExplicit)
-                                .filterVideo(request.hideVideos)
-                        batch.copy(items = filtered)
+                // 3. Fallback: search by playlist title when nothing came from playlist content
+                if (candidates.isEmpty() && request.playlistName.isNotBlank()) {
+                    val searchedSongs =
+                        YouTube
+                            .search(
+                                query = request.playlistName,
+                                filter = YouTube.SearchFilter.FILTER_SONG,
+                                useAccountContext = false,
+                            ).getOrNullPreservingCancellation()
+                            ?.items
+                            .orEmpty()
+                            .filterIsInstance<SongItem>()
+                    val filteredSearch = filterSongs(searchedSongs)
+                    if (filteredSearch.isNotEmpty()) {
+                        candidates =
+                            mergeSuggestionLists(
+                                lists = listOf(filteredSearch),
+                                previouslyShownIds = request.previouslyShownIds,
+                                maxPoolSize = MAX_POOL_SIZE,
+                            )
                     }
-
-                val titleShareCap =
-                    if (request.source == PlaylistSuggestionSource.BOTH && useContentSignals) {
-                        PlaylistRecommendationPolicy.TITLE_SHARE_CAP_IN_BOTH
-                    } else {
-                        null
-                    }
-
-                val ranked =
-                    PlaylistRecommendationPolicy.rankCandidates(
-                        batches = filteredBatches,
-                        playlistSongIds = playlistSongIds,
-                        playlistArtistKeys = playlistArtistKeys,
-                        playlistSongSignatures = playlistSongSignatures,
-                        previouslyShownIds = request.previouslyShownIds,
-                        titleShareCapInBoth = titleShareCap,
-                    )
-
-                val allEligibleSeedIds =
-                    if (usedLocalFallback) {
-                        seedCandidates
-                            .filter { !it.isPodcast && it.title.isNotBlank() }
-                            .mapTo(HashSet()) { it.id }
-                    } else {
-                        seedCandidates
-                            .filter { !it.isLocal && !it.isPodcast && it.isYouTubeId }
-                            .mapTo(HashSet()) { it.id }
-                    }
-                val updatedUsedSeeds = request.usedSeedIds + newlyUsedSeedIds
-                val normalizedUsedSeeds =
-                    if (allEligibleSeedIds.isNotEmpty() && updatedUsedSeeds.containsAll(allEligibleSeedIds)) {
-                        newlyUsedSeedIds
-                    } else {
-                        updatedUsedSeeds
-                    }
+                }
 
                 PlaylistRecommendationResult(
-                    items = ranked,
-                    usedSeedIds = normalizedUsedSeeds,
+                    items = candidates,
+                    usedSeedIds = updatedUsedSeedIds,
                     nextRadioContinuation = nextRadioContinuation,
-                    nextTitlePlaylistOffset = nextTitleOffset,
                 )
             }
 
         private data class PlaylistRadioFetch(
             val items: List<SongItem>,
             val nextContinuation: String?,
-        )
-
-        private data class TitleBatchesFetch(
-            val batches: List<RecommendationBatch>,
-            val nextOffset: Int,
         )
 
         private suspend fun fetchPlaylistRadio(
@@ -373,7 +239,6 @@ class PlaylistRecommendationRepository
                 )
             }
 
-            // Retry from fresh radio start if continuation expired or returned empty
             if (continuation != null) {
                 val fresh =
                     YouTube
@@ -390,184 +255,6 @@ class PlaylistRecommendationRepository
             return PlaylistRadioFetch(items = emptyList(), nextContinuation = null)
         }
 
-        private suspend fun fetchSeedBatches(seedId: String): List<RecommendationBatch> {
-            val nextResult =
-                YouTube
-                    .next(WatchEndpoint(videoId = seedId))
-                    .getOrNullPreservingCancellation()
-                    ?: return emptyList()
-
-            val batches = mutableListOf<RecommendationBatch>()
-            val sourceKey = "seed:$seedId"
-
-            val relatedSongs =
-                nextResult.relatedEndpoint
-                    ?.let { endpoint ->
-                        YouTube.related(endpoint).getOrNullPreservingCancellation()?.songs
-                    }.orEmpty()
-
-            if (relatedSongs.isNotEmpty()) {
-                batches.add(
-                    RecommendationBatch(
-                        kind = RecommendationBatchKind.SONG_RELATED,
-                        sourceKey = sourceKey,
-                        items = relatedSongs,
-                    ),
-                )
-            }
-
-            if (nextResult.items.isNotEmpty()) {
-                batches.add(
-                    RecommendationBatch(
-                        kind = RecommendationBatchKind.SONG_NEXT,
-                        sourceKey = sourceKey,
-                        items = nextResult.items,
-                    ),
-                )
-            }
-
-            return batches
-        }
-
-        private suspend fun fetchTitleBatches(
-            playlistName: String,
-            ownBrowseId: String?,
-            offset: Int,
-            maxPlaylists: Int,
-        ): TitleBatchesFetch {
-            val cleanOwnId = ownBrowseId?.removePrefix("VL")
-            val communityPlaylists =
-                YouTube
-                    .search(
-                        query = playlistName,
-                        filter = YouTube.SearchFilter.FILTER_COMMUNITY_PLAYLIST,
-                        useAccountContext = false,
-                    ).getOrNullPreservingCancellation()
-                    ?.items
-                    .orEmpty()
-                    .filterIsInstance<PlaylistItem>()
-                    .filter { it.id.removePrefix("VL") != cleanOwnId }
-
-            val matchedPlaylists =
-                communityPlaylists.ifEmpty {
-                    YouTube
-                        .search(
-                            query = playlistName,
-                            filter = YouTube.SearchFilter.FILTER_FEATURED_PLAYLIST,
-                            useAccountContext = false,
-                        ).getOrNullPreservingCancellation()
-                        ?.items
-                        .orEmpty()
-                        .filterIsInstance<PlaylistItem>()
-                        .filter { it.id.removePrefix("VL") != cleanOwnId }
-                }
-
-            val batches = mutableListOf<RecommendationBatch>()
-            var nextOffset = offset
-
-            if (matchedPlaylists.isNotEmpty()) {
-                val windowSize = minOf(matchedPlaylists.size, TITLE_PLAYLIST_CANDIDATE_WINDOW)
-                val startIndex = offset % windowSize
-                val picked =
-                    (0 until minOf(maxPlaylists, windowSize)).map { delta ->
-                        matchedPlaylists[(startIndex + delta) % windowSize]
-                    }
-                nextOffset = (startIndex + picked.size) % windowSize
-
-                picked.forEach { playlistItem ->
-                    val songs =
-                        YouTube
-                            .playlist(playlistItem.id.removePrefix("VL"))
-                            .getOrNullPreservingCancellation()
-                            ?.songs
-                            .orEmpty()
-                            .take(MAX_SONGS_PER_TITLE_PLAYLIST)
-                    if (songs.isNotEmpty()) {
-                        batches.add(
-                            RecommendationBatch(
-                                kind = RecommendationBatchKind.TITLE_PLAYLIST,
-                                sourceKey = "title_playlist:${playlistItem.id}",
-                                items = songs,
-                            ),
-                        )
-                    }
-                }
-            }
-
-            if (batches.isEmpty()) {
-                val fallbackSongs = searchSongs(playlistName)
-                if (fallbackSongs.isNotEmpty()) {
-                    batches.add(
-                        RecommendationBatch(
-                            kind = RecommendationBatchKind.TITLE_SEARCH,
-                            sourceKey = "title_search",
-                            items = fallbackSongs,
-                        ),
-                    )
-                }
-            }
-
-            return TitleBatchesFetch(batches = batches, nextOffset = nextOffset)
-        }
-
-        private suspend fun searchSongs(query: String): List<SongItem> =
-            YouTube
-                .search(
-                    query = query,
-                    filter = YouTube.SearchFilter.FILTER_SONG,
-                    useAccountContext = false,
-                ).getOrNullPreservingCancellation()
-                ?.items
-                .orEmpty()
-                .filterIsInstance<SongItem>()
-
-        private fun PlaylistSong.toSeedCandidate(): PlaylistSeedCandidate {
-            val primaryArtist = song.artists.firstOrNull()
-            val artistKey =
-                primaryArtist?.id?.takeIf(String::isNotBlank)
-                    ?: primaryArtist?.name?.trim()?.lowercase(Locale.ROOT).orEmpty()
-            val songId = song.id
-            return PlaylistSeedCandidate(
-                id = songId,
-                title = song.title,
-                artistKey = artistKey,
-                artistName = primaryArtist?.name.orEmpty(),
-                totalPlayTime = song.song.totalPlayTime,
-                position = map.position,
-                isLocal = song.song.isLocal || songId.isLocalMediaId(),
-                isPodcast = song.song.isPodcast,
-                isYouTubeId = songId.length == PlaylistRecommendationPolicy.YOUTUBE_VIDEO_ID_LENGTH,
-            )
-        }
-
-        private fun Song.toSongItem(): SongItem =
-            SongItem(
-                id = id,
-                title = title,
-                artists = artists.map { artist -> Artist(name = artist.name, id = artist.id) },
-                album = album?.let { album -> Album(name = album.title, id = album.id) },
-                duration = song.duration.takeIf { duration -> duration >= 0 },
-                thumbnail = song.thumbnailUrl.orEmpty(),
-                explicit = song.explicit,
-                endpoint =
-                    WatchEndpoint(
-                        videoId = id,
-                        watchEndpointMusicSupportedConfigs =
-                            WatchEndpointMusicSupportedConfigs(
-                                watchEndpointMusicConfig =
-                                    WatchEndpointMusicConfig(
-                                        musicVideoType =
-                                            if (song.isMusicVideo) {
-                                                WatchEndpointMusicConfig.MUSIC_VIDEO_TYPE_OMV
-                                            } else {
-                                                WatchEndpointMusicConfig.MUSIC_VIDEO_TYPE_ATV
-                                            },
-                                    ),
-                            ),
-                    ),
-                isPodcast = song.isPodcast,
-            )
-
         private fun <T> Result<T>.getOrNullPreservingCancellation(): T? {
             exceptionOrNull()?.let { throwable ->
                 if (throwable is CancellationException) throw throwable
@@ -575,15 +262,74 @@ class PlaylistRecommendationRepository
             return getOrNull()
         }
 
-        private companion object {
-            const val MAX_CONCURRENT_REQUESTS = 3
-            const val SEEDS_WITH_SYNCED_RADIO = 3
-            const val SEEDS_FOR_LOCAL_PLAYLIST = 4
-            const val LOCAL_FALLBACK_QUERY_LIMIT = 3
-            const val TITLE_PLAYLISTS_IN_BOTH = 1
-            const val TITLE_PLAYLISTS_ONLY = 2
-            const val TITLE_PLAYLIST_CANDIDATE_WINDOW = 6
-            const val MAX_SONGS_PER_TITLE_PLAYLIST = 25
-            const val SPARSE_CONTENT_THRESHOLD = 15
+        companion object {
+            const val YOUTUBE_VIDEO_ID_LENGTH = 11
+            const val DEFAULT_PAGE_SIZE = 10
+            const val MAX_POOL_SIZE = 50
+            private const val SEED_COUNT = 3
         }
     }
+
+internal fun selectRecommendationSeeds(
+    candidates: List<RecommendationSeed>,
+    maxSeeds: Int,
+    usedSeedIds: Set<String> = emptySet(),
+    random: Random = Random.Default,
+): List<RecommendationSeed> {
+    if (maxSeeds <= 0 || candidates.isEmpty()) return emptyList()
+    val unique = candidates.distinctBy { it.id }
+    val (fresh, stale) = unique.partition { it.id !in usedSeedIds }
+
+    val selected = ArrayList<RecommendationSeed>(minOf(maxSeeds, unique.size))
+    val selectedIds = HashSet<String>()
+    val selectedArtists = HashSet<String>()
+
+    fun pickFrom(pool: List<RecommendationSeed>) {
+        if (pool.isEmpty() || selected.size >= maxSeeds) return
+        val shuffled = pool.shuffled(random)
+        for (seed in shuffled) {
+            if (selected.size >= maxSeeds) break
+            if (seed.id in selectedIds) continue
+            if (seed.artistKey.isNotEmpty() && seed.artistKey in selectedArtists) continue
+            selected.add(seed)
+            selectedIds.add(seed.id)
+            if (seed.artistKey.isNotEmpty()) selectedArtists.add(seed.artistKey)
+        }
+        if (selected.size < maxSeeds) {
+            for (seed in shuffled) {
+                if (selected.size >= maxSeeds) break
+                if (selectedIds.add(seed.id)) {
+                    selected.add(seed)
+                }
+            }
+        }
+    }
+
+    pickFrom(fresh)
+    pickFrom(stale)
+    return selected
+}
+
+internal fun mergeSuggestionLists(
+    lists: List<List<SongItem>>,
+    previouslyShownIds: Set<String> = emptySet(),
+    maxPoolSize: Int = PlaylistRecommendationRepository.MAX_POOL_SIZE,
+): List<SongItem> {
+    if (lists.isEmpty() || maxPoolSize <= 0) return emptyList()
+
+    val interleaved = ArrayList<SongItem>()
+    val seenIds = HashSet<String>()
+    val maxLength = lists.maxOfOrNull { it.size } ?: 0
+
+    for (index in 0 until maxLength) {
+        for (list in lists) {
+            val item = list.getOrNull(index) ?: continue
+            if (seenIds.add(item.id)) {
+                interleaved.add(item)
+            }
+        }
+    }
+
+    val (unseen, shown) = interleaved.partition { it.id !in previouslyShownIds }
+    return (unseen + shown).take(maxPoolSize)
+}

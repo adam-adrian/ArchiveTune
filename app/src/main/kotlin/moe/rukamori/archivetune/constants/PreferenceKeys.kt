@@ -224,17 +224,10 @@ enum class AppFontPreference {
     CUSTOM,
 }
 
-enum class PlaylistSuggestionSource {
-    PLAYLIST_TITLE,
-    PLAYLIST_CONTENT,
-    BOTH,
-}
-
 val AppLanguageKey = stringKey("appLanguage")
 val UseSystemLanguageKey = booleanKey("useSystemLanguage")
 val ContentLanguageKey = stringKey("contentLanguage")
 val ContentCountryKey = stringKey("contentCountry")
-val PlaylistSuggestionSourceKey = stringKey("playlistSuggestionSource")
 val EnableKugouKey = booleanKey("enableKugou")
 val EnableLrcLibKey = booleanKey("enableLrclib")
 val EnableBetterLyricsKey = booleanKey("enableBetterLyrics")

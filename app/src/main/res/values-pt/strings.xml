@@ -925,10 +925,6 @@
     <string name="onboarding_community_donate_desc">Apoiar o desenvolvimento decorrente.</string>
     <string name="you_might_like">Poderás gostar</string>
     <string name="refresh_suggestions">Atualizar sugestões</string>
-    <string name="you_might_like_source">Fonte das recomendações das listas de reprodução</string>
-    <string name="playlist_suggestion_source_title">Título da lista de reprodução</string>
-    <string name="playlist_suggestion_source_content">Conteúdo da lista de reprodução</string>
-    <string name="playlist_suggestion_source_both">Título e conteúdo da lista de reprodução</string>
     <string name="music_together">ArchiveTune Music Together</string>
     <string name="together_display_name">Nome em exibição</string>
     <string name="together_display_name_placeholder">O teu nome</string>

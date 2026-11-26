@@ -638,9 +638,6 @@
     <string name="allow">Zulassen</string>
     <string name="you_might_like">Könnte dir gefallen</string>
     <string name="refresh_suggestions">Vorschläge aktualisieren</string>
-    <string name="playlist_suggestion_source_title">Playlisttitel</string>
-    <string name="playlist_suggestion_source_content">Playlistinhalt</string>
-    <string name="playlist_suggestion_source_both">Playlistinhalt und -titel</string>
     <string name="together_display_name">Anzeigename</string>
     <string name="together_display_name_placeholder">Dein Name</string>
     <string name="together_port">Sitzungsport</string>
@@ -949,7 +946,6 @@
     <string name="search_downloads">Downloads durchsuchen</string>
     <string name="onboarding_community_discord_title">Discord beitreten</string>
     <string name="onboarding_community_telegram_title">Telegram beitreten</string>
-    <string name="you_might_like_source">Playlistempfehlungsquelle</string>
     <string name="together_participants_empty_body">Leute, die dieser Sitzung beitreten, werden hier auftauchen.</string>
     <string name="together_activity_log_subtitle">Sitzungs- und Wiedergabeereignisse</string>
     <string name="together_activity_host_transferred">Host an %1$s übertragen</string>

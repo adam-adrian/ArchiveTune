@@ -600,10 +600,6 @@
     <string name="updates_loading_commits">Chargement des modifications récentes</string>
     <string name="updates_recent_commits_count">%1$d modifications récentes</string>
     <string name="updates_no_commits">Aucune modification récente n\'a été trouvée</string>
-    <string name="you_might_like_source">Source des recommandations de playlists</string>
-    <string name="playlist_suggestion_source_title">Titre de la playlist</string>
-    <string name="playlist_suggestion_source_content">Contenu de la playlist</string>
-    <string name="playlist_suggestion_source_both">Titre et contenu de la playlist</string>
     <string name="removed_song_from_queue">« %s » a été retiré de la file d\'attente</string>
     <string name="removed_n_songs_from_queue">%d titres ont été supprimés de la file d\'attente</string>
     <string name="internet">Internet</string>

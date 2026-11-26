@@ -735,10 +735,6 @@
     <string name="allow">אפשר</string>
     <string name="you_might_like">אולי תאהבו</string>
     <string name="refresh_suggestions">רענון הצעות</string>
-    <string name="you_might_like_source">אולי תאהבו מקור</string>
-    <string name="playlist_suggestion_source_title">כותרת הפלייליסט</string>
-    <string name="playlist_suggestion_source_content">תוכן הפלייליסט</string>
-    <string name="playlist_suggestion_source_both">שם ותוכן הפלייליסט</string>
     <string name="music_together">ArchiveTune ביחד</string>
     <string name="together_display_name">שם תצוגה</string>
     <string name="together_display_name_placeholder">השם שלך</string>
