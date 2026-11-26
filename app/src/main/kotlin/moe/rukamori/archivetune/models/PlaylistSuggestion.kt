@@ -7,24 +7,12 @@
 
 package moe.rukamori.archivetune.models
 
-import moe.rukamori.archivetune.innertube.models.YTItem
+import androidx.compose.runtime.Immutable
+import moe.rukamori.archivetune.innertube.models.SongItem
 
+@Immutable
 data class PlaylistSuggestion(
-    val items: List<YTItem>,
-    val continuation: String?,
-    val currentQueryIndex: Int,
-    val totalQueries: Int,
-    val query: String,
-    val hasMore: Boolean = true,
-    val timestamp: Long = System.currentTimeMillis(),
-)
-
-data class PlaylistSuggestionPage(
-    val items: List<YTItem>,
-    val continuation: String?,
-)
-
-data class PlaylistSuggestionQuery(
-    val query: String,
-    val priority: Int,
+    val items: List<SongItem>,
+    val currentPage: Int,
+    val totalPages: Int,
 )

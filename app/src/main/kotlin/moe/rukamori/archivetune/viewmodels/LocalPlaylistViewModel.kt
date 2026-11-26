@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -48,21 +49,17 @@ import moe.rukamori.archivetune.constants.PlaylistSuggestionSource
 import moe.rukamori.archivetune.constants.PlaylistSuggestionSourceKey
 import moe.rukamori.archivetune.db.MusicDatabase
 import moe.rukamori.archivetune.db.entities.PlaylistSong
-import moe.rukamori.archivetune.extensions.filterBlockedArtists
 import moe.rukamori.archivetune.extensions.reversed
 import moe.rukamori.archivetune.extensions.toEnum
 import moe.rukamori.archivetune.innertube.YouTube
 import moe.rukamori.archivetune.innertube.models.SongItem
-import moe.rukamori.archivetune.innertube.models.YTItem
-import moe.rukamori.archivetune.innertube.models.filterExplicit
-import moe.rukamori.archivetune.innertube.models.filterVideo
 import moe.rukamori.archivetune.models.PlaylistSuggestion
-import moe.rukamori.archivetune.models.PlaylistSuggestionPage
-import moe.rukamori.archivetune.models.PlaylistSuggestionQuery
 import moe.rukamori.archivetune.models.toMediaMetadata
+import moe.rukamori.archivetune.playlist.PlaylistRecommendationPolicy
+import moe.rukamori.archivetune.playlist.PlaylistRecommendationRepository
+import moe.rukamori.archivetune.playlist.PlaylistRecommendationRequest
 import moe.rukamori.archivetune.playlist.RemovePlaylistCoverUseCase
 import moe.rukamori.archivetune.playlist.UpdatePlaylistCoverUseCase
-import moe.rukamori.archivetune.utils.PlaylistSuggestionQueryBuilder
 import moe.rukamori.archivetune.utils.SyncUtils
 import moe.rukamori.archivetune.utils.dataStore
 import moe.rukamori.archivetune.utils.reportException
@@ -79,6 +76,7 @@ class LocalPlaylistViewModel
         private val syncUtils: SyncUtils,
         private val updatePlaylistCover: UpdatePlaylistCoverUseCase,
         private val removePlaylistCover: RemovePlaylistCoverUseCase,
+        private val recommendationRepository: PlaylistRecommendationRepository,
         savedStateHandle: SavedStateHandle,
     ) : ViewModel() {
         val playlistId = savedStateHandle.get<String>("playlistId")!!
@@ -162,30 +160,47 @@ class LocalPlaylistViewModel
         private val viewCountsSemaphore = Semaphore(permits = 4)
 
         // Playlist Suggestions State
-        private val _playlistSuggestions = MutableStateFlow<PlaylistSuggestion?>(null)
-        val playlistSuggestions =
-            combine(_playlistSuggestions, playlistSongs) { suggestions, songs ->
-                val songIds = songs.map { it.song.id }.toSet()
-                val filteredItems = suggestions?.items?.filter { it.id !in songIds } ?: emptyList()
-                suggestions?.copy(
-                    items = filteredItems.take(10),
+        private val _suggestionPool = MutableStateFlow<List<SongItem>?>(null)
+        private val _currentSuggestionPage = MutableStateFlow(0)
+        private val playlistSongIds =
+            database
+                .playlistSongs(playlistId)
+                .map { songs -> songs.mapTo(HashSet(songs.size)) { it.song.id } }
+                .distinctUntilChanged()
+
+        val playlistSuggestions: StateFlow<PlaylistSuggestion?> =
+            combine(_suggestionPool, _currentSuggestionPage, playlistSongIds) { pool, pageIndex, songIds ->
+                if (pool == null) return@combine null
+                val available = pool.filter { it.id !in songIds }
+                if (available.isEmpty()) {
+                    return@combine PlaylistSuggestion(
+                        items = emptyList(),
+                        currentPage = 0,
+                        totalPages = 0,
+                    )
+                }
+                val pageSize = PlaylistRecommendationPolicy.DEFAULT_PAGE_SIZE
+                val totalPages = (available.size + pageSize - 1) / pageSize
+                val safePage = pageIndex.coerceIn(0, totalPages - 1)
+                val fromIndex = safePage * pageSize
+                val toIndex = (fromIndex + pageSize).coerceAtMost(available.size)
+                PlaylistSuggestion(
+                    items = available.subList(fromIndex, toIndex),
+                    currentPage = safePage,
+                    totalPages = totalPages,
                 )
             }.stateIn(viewModelScope, SharingStarted.Lazily, null)
 
         private val _isLoadingSuggestions = MutableStateFlow(false)
         val isLoadingSuggestions = _isLoadingSuggestions.asStateFlow()
 
-        private val suggestionQueries = MutableStateFlow<List<PlaylistSuggestionQuery>>(emptyList())
-        private val currentSuggestionQueryIndex = MutableStateFlow(0)
-        private val suggestionsCacheTimestamp = MutableStateFlow(0L)
-        private val suggestedSongIds = MutableStateFlow<Set<String>>(emptySet())
-
-        // Mutex to prevent concurrent suggestion loading
-        private val suggestionLoadMutex = Mutex()
-
-        // Cache for current suggestion page
-        private var currentSuggestionPage: PlaylistSuggestionPage? = null
-        private val visitedSuggestionPages = mutableMapOf<Int, PlaylistSuggestion>()
+        private var usedSuggestionSeedIds = emptySet<String>()
+        private var previouslyShownSuggestionIds = ArrayDeque<String>()
+        private var viewedSuggestionIdsInCurrentPool = LinkedHashSet<String>()
+        private var suggestionRadioContinuation: String? = null
+        private var suggestionTitlePlaylistOffset = 0
+        private var suggestionLoadJob: Job? = null
+        private var suggestionLoadGeneration = 0L
 
         private val _isRefreshing = MutableStateFlow(false)
         val isRefreshing = _isRefreshing.asStateFlow()
@@ -226,15 +241,54 @@ class LocalPlaylistViewModel
                 }
             }
 
-            // Auto-load suggestions when playlist or songs change
+            // Auto-load suggestions once Room emits real playlist & songs, and react to setting/title/emptiness changes
+            val suggestionPreferences =
+                context.dataStore.data
+                    .map { preferences ->
+                        SuggestionPreferences(
+                            source = preferences[PlaylistSuggestionSourceKey].toEnum(PlaylistSuggestionSource.BOTH),
+                            hideExplicit = preferences[HideExplicitKey] ?: false,
+                            hideVideos = preferences[HideVideoKey] ?: false,
+                        )
+                    }.distinctUntilChanged()
+
             viewModelScope.launch {
-                combine(playlist, playlistSongs) { playlist, songs ->
-                    Pair(playlist, songs)
-                }.collect { (playlist, songs) ->
-                    playlist?.let {
-                        loadPlaylistSuggestions()
+                combine(
+                    database.playlist(playlistId),
+                    database.playlistSongs(playlistId),
+                    suggestionPreferences,
+                ) { playlist, songs, prefs ->
+                    if (playlist == null) return@combine null
+                    val effectiveTitle =
+                        if (prefs.source == PlaylistSuggestionSource.PLAYLIST_CONTENT) {
+                            ""
+                        } else {
+                            playlist.playlist.name
+                        }
+                    SuggestionTriggerInput(
+                        trigger =
+                            SuggestionTrigger(
+                                effectiveTitle = effectiveTitle,
+                                browseId = playlist.playlist.browseId,
+                                radioEndpointParams = playlist.playlist.radioEndpointParams,
+                                hasSongs = songs.isNotEmpty(),
+                                preferences = prefs,
+                            ),
+                        playlistName = playlist.playlist.name,
+                        songs = songs,
+                    )
+                }.distinctUntilChangedBy { it?.trigger }
+                    .collect { input ->
+                        if (input == null) return@collect
+                        loadPlaylistSuggestions(
+                            playlistName = input.playlistName,
+                            browseId = input.trigger.browseId,
+                            radioEndpointParams = input.trigger.radioEndpointParams,
+                            songs = input.songs,
+                            preferences = input.trigger.preferences,
+                            resetHistory = true,
+                        )
                     }
-                }
             }
         }
 
@@ -320,185 +374,209 @@ class LocalPlaylistViewModel
 
         // Playlist Suggestions Functions
 
-        fun loadPlaylistSuggestions(forceReset: Boolean = false) {
-            viewModelScope.launch {
-                suggestionLoadMutex.withLock {
-                    val currentSongs = playlistSongs.first()
-                    val currentPlaylist = playlist.first() ?: return@withLock
+        private fun hasActiveSignals(
+            playlistName: String,
+            browseId: String?,
+            songs: List<PlaylistSong>,
+            source: PlaylistSuggestionSource,
+        ): Boolean =
+            when (source) {
+                PlaylistSuggestionSource.PLAYLIST_CONTENT -> songs.isNotEmpty() || !browseId.isNullOrBlank()
+                PlaylistSuggestionSource.PLAYLIST_TITLE -> playlistName.isNotBlank()
+                PlaylistSuggestionSource.BOTH -> {
+                    songs.isNotEmpty() ||
+                        !browseId.isNullOrBlank() ||
+                        PlaylistRecommendationPolicy.isMeaningfulPlaylistTitle(playlistName)
+                }
+            }
 
-                    val shouldRefresh =
-                        forceReset ||
-                            PlaylistSuggestionQueryBuilder.shouldRefreshSuggestions(
-                                suggestionsCacheTimestamp.value,
-                            )
-
-                    if (!shouldRefresh && _playlistSuggestions.value != null) {
-                        return@withLock // Use cached suggestions
-                    }
-
-                    _isLoadingSuggestions.value = true
-
-                    // Clear state for refresh
-                    _playlistSuggestions.value = null
-                    currentSuggestionQueryIndex.value = 0
-                    // Keep previously suggested IDs to avoid showing them again on refresh
-                    // but ensure songs already in playlist are always included in the filter
-                    suggestedSongIds.value = suggestedSongIds.value + currentSongs.map { it.song.id }.toSet()
-                    suggestionsCacheTimestamp.value = 0L
-                    currentSuggestionPage = null
-                    visitedSuggestionPages.clear()
-
-                    try {
-                        val suggestionSource =
-                            context.dataStore.data
-                                .first()[PlaylistSuggestionSourceKey]
-                                .toEnum(PlaylistSuggestionSource.BOTH)
-
-                        // Build suggestion queries
-                        val queries =
-                            PlaylistSuggestionQueryBuilder.buildSuggestionQueries(
-                                playlistName = currentPlaylist.playlist.name,
-                                playlistSongs = currentSongs,
-                                suggestionSource = suggestionSource,
-                            )
-                        suggestionQueries.value = queries
-                        suggestionsCacheTimestamp.value = System.currentTimeMillis()
-
-                        if (queries.isEmpty()) {
-                            _playlistSuggestions.value =
-                                PlaylistSuggestion(
-                                    items = emptyList(),
-                                    continuation = null,
-                                    currentQueryIndex = 0,
-                                    totalQueries = 0,
-                                    query = "",
-                                    hasMore = false,
-                                )
-                            return@withLock
-                        }
-
-                        // Load first page of suggestions
-                        loadNextSuggestionPage()
-                    } catch (e: Exception) {
-                        reportException(e)
-                        if (_playlistSuggestions.value == null) {
-                            _playlistSuggestions.value =
-                                PlaylistSuggestion(
-                                    items = emptyList(),
-                                    continuation = null,
-                                    currentQueryIndex = 0,
-                                    totalQueries = 0,
-                                    query = "",
-                                    hasMore = false,
-                                )
-                        }
-                    } finally {
-                        _isLoadingSuggestions.value = false
-                    }
+        private fun recordShownSuggestionIds(ids: Iterable<String>) {
+            for (id in ids) {
+                if (id in previouslyShownSuggestionIds) continue
+                previouslyShownSuggestionIds.addLast(id)
+                while (previouslyShownSuggestionIds.size > MAX_REMEMBERED_SHOWN_SUGGESTIONS) {
+                    previouslyShownSuggestionIds.removeFirst()
                 }
             }
         }
 
-        fun loadMoreSuggestions() {
-            viewModelScope.launch {
-                suggestionLoadMutex.withLock {
-                    if (_isLoadingSuggestions.value) return@withLock
+        private fun markCurrentPageViewed() {
+            playlistSuggestions.value?.items?.forEach { item ->
+                viewedSuggestionIdsInCurrentPool.add(item.id)
+            }
+        }
 
-                    val currentSuggestions = _playlistSuggestions.value ?: return@withLock
-                    val queries = suggestionQueries.value
+        private fun loadPlaylistSuggestions(
+            playlistName: String,
+            browseId: String?,
+            radioEndpointParams: String?,
+            songs: List<PlaylistSong>,
+            preferences: SuggestionPreferences,
+            resetHistory: Boolean,
+        ) {
+            suggestionLoadJob?.cancel()
+            val generation = ++suggestionLoadGeneration
 
+            if (!hasActiveSignals(playlistName, browseId, songs, preferences.source)) {
+                _suggestionPool.value = null
+                _currentSuggestionPage.value = 0
+                _isLoadingSuggestions.value = false
+                viewedSuggestionIdsInCurrentPool.clear()
+                if (resetHistory) {
+                    usedSuggestionSeedIds = emptySet()
+                    previouslyShownSuggestionIds.clear()
+                    suggestionRadioContinuation = null
+                    suggestionTitlePlaylistOffset = 0
+                }
+                return
+            }
+
+            if (resetHistory) {
+                _suggestionPool.value = null
+                _currentSuggestionPage.value = 0
+                usedSuggestionSeedIds = emptySet()
+                previouslyShownSuggestionIds.clear()
+                viewedSuggestionIdsInCurrentPool.clear()
+                suggestionRadioContinuation = null
+                suggestionTitlePlaylistOffset = 0
+            } else {
+                markCurrentPageViewed()
+                recordShownSuggestionIds(viewedSuggestionIdsInCurrentPool)
+            }
+
+            _isLoadingSuggestions.value = true
+            val request =
+                PlaylistRecommendationRequest(
+                    playlistName = playlistName,
+                    browseId = browseId,
+                    radioEndpointParams = radioEndpointParams,
+                    songs = songs,
+                    source = preferences.source,
+                    usedSeedIds = usedSuggestionSeedIds,
+                    previouslyShownIds = previouslyShownSuggestionIds.toSet(),
+                    radioContinuation = suggestionRadioContinuation,
+                    titlePlaylistOffset = suggestionTitlePlaylistOffset,
+                    hideExplicit = preferences.hideExplicit,
+                    hideVideos = preferences.hideVideos,
+                )
+
+            suggestionLoadJob =
+                viewModelScope.launch {
                     try {
-                        // If we have a continuation, load more from current query
-                        currentSuggestionPage?.continuation?.let { continuation ->
-                            _isLoadingSuggestions.value = true
-                            loadMoreFromContinuation(continuation)
-                            return@withLock
-                        }
-
-                        // Otherwise, move to next query
-                        val nextIndex = currentSuggestionQueryIndex.value + 1
-                        if (nextIndex < queries.size) {
-                            _isLoadingSuggestions.value = true
-                            currentSuggestionQueryIndex.value = nextIndex
-                            loadNextSuggestionPage()
-                        } else {
-                            // No more queries and no continuation
-                            _playlistSuggestions.value = currentSuggestions.copy(hasMore = false)
+                        val result = recommendationRepository.loadRecommendations(request)
+                        if (generation != suggestionLoadGeneration) return@launch
+                        usedSuggestionSeedIds = result.usedSeedIds
+                        suggestionRadioContinuation = result.nextRadioContinuation
+                        suggestionTitlePlaylistOffset = result.nextTitlePlaylistOffset
+                        viewedSuggestionIdsInCurrentPool.clear()
+                        result.items
+                            .take(PlaylistRecommendationPolicy.DEFAULT_PAGE_SIZE)
+                            .forEach { viewedSuggestionIdsInCurrentPool.add(it.id) }
+                        _currentSuggestionPage.value = 0
+                        _suggestionPool.value = result.items
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (e: Exception) {
+                        reportException(e)
+                        if (generation == suggestionLoadGeneration && _suggestionPool.value == null) {
+                            _suggestionPool.value = emptyList()
                         }
                     } finally {
-                        _isLoadingSuggestions.value = false
+                        if (generation == suggestionLoadGeneration) {
+                            _isLoadingSuggestions.value = false
+                        }
                     }
                 }
-            }
         }
 
         fun changeSuggestionPage(direction: Int) {
             if (direction != -1 && direction != 1) return
             if (_isLoadingSuggestions.value) return
-            val current = _playlistSuggestions.value ?: return
-            val targetIndex = current.currentQueryIndex + direction
-            val query = suggestionQueries.value.getOrNull(targetIndex) ?: return
-            _isLoadingSuggestions.value = true
-
-            viewModelScope.launch {
-                try {
-                    suggestionLoadMutex.withLock {
-                        if (_playlistSuggestions.value !== current) return@withLock
-                        visitedSuggestionPages[current.currentQueryIndex] = current
-                        val target = visitedSuggestionPages[targetIndex] ?: withContext(Dispatchers.IO) {
-                            val result = YouTube.search(
-                                query = query.query,
-                                filter = YouTube.SearchFilter.FILTER_SONG,
-                                useAccountContext = false,
-                            ).getOrThrow()
-                            val items = filterSuggestionItems(result.items).shuffled().take(10)
-                            PlaylistSuggestion(
-                                items = items,
-                                continuation = result.continuation,
-                                currentQueryIndex = targetIndex,
-                                totalQueries = suggestionQueries.value.size,
-                                query = query.query,
-                                hasMore = result.continuation != null ||
-                                    targetIndex < suggestionQueries.value.lastIndex,
-                            )
-                        }
-                        visitedSuggestionPages[targetIndex] = target
-                        suggestedSongIds.value = suggestedSongIds.value + target.items.map { it.id }
-                        currentSuggestionQueryIndex.value = targetIndex
-                        currentSuggestionPage = PlaylistSuggestionPage(
-                            items = target.items,
-                            continuation = target.continuation,
-                        )
-                        _playlistSuggestions.value = target
-                    }
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (exception: Exception) {
-                    reportException(exception)
-                } finally {
-                    _isLoadingSuggestions.value = false
+            val current = playlistSuggestions.value ?: return
+            if (current.totalPages <= 1) return
+            markCurrentPageViewed()
+            val targetPage = (current.currentPage + direction).coerceIn(0, current.totalPages - 1)
+            if (targetPage != current.currentPage) {
+                _currentSuggestionPage.value = targetPage
+                val pool = _suggestionPool.value.orEmpty()
+                val pageSize = PlaylistRecommendationPolicy.DEFAULT_PAGE_SIZE
+                val currentSongIds = playlistSongs.value.mapTo(HashSet()) { it.song.id }
+                val available = pool.filter { it.id !in currentSongIds }
+                val fromIndex = targetPage * pageSize
+                val toIndex = (fromIndex + pageSize).coerceAtMost(available.size)
+                if (fromIndex < toIndex) {
+                    available.subList(fromIndex, toIndex).forEach { viewedSuggestionIdsInCurrentPool.add(it.id) }
                 }
             }
         }
 
         fun resetAndLoadPlaylistSuggestions() {
-            loadPlaylistSuggestions(forceReset = true)
-        }
+            suggestionLoadJob?.cancel()
+            val generation = ++suggestionLoadGeneration
+            markCurrentPageViewed()
+            recordShownSuggestionIds(viewedSuggestionIdsInCurrentPool)
+            _isLoadingSuggestions.value = true
 
-        /**
-         * Mark a suggested song as added to prevent it from appearing again
-         */
-        fun markSuggestionAsAdded(songId: String) {
-            suggestedSongIds.value = suggestedSongIds.value + songId
-
-            // Also remove from current suggestions list
-            val currentSuggestions = _playlistSuggestions.value
-            if (currentSuggestions != null) {
-                _playlistSuggestions.value =
-                    currentSuggestions.copy(
-                        items = currentSuggestions.items.filter { it.id != songId },
-                    )
-            }
+            suggestionLoadJob =
+                viewModelScope.launch {
+                    try {
+                        val currentPlaylist = database.playlist(playlistId).first()
+                        val currentSongs = database.playlistSongs(playlistId).first()
+                        val dataStorePrefs = context.dataStore.data.first()
+                        if (generation != suggestionLoadGeneration) return@launch
+                        if (currentPlaylist == null) {
+                            _suggestionPool.value = null
+                            return@launch
+                        }
+                        val prefs =
+                            SuggestionPreferences(
+                                source = dataStorePrefs[PlaylistSuggestionSourceKey].toEnum(PlaylistSuggestionSource.BOTH),
+                                hideExplicit = dataStorePrefs[HideExplicitKey] ?: false,
+                                hideVideos = dataStorePrefs[HideVideoKey] ?: false,
+                            )
+                        if (!hasActiveSignals(currentPlaylist.playlist.name, currentPlaylist.playlist.browseId, currentSongs, prefs.source)) {
+                            _suggestionPool.value = null
+                            _currentSuggestionPage.value = 0
+                            return@launch
+                        }
+                        val request =
+                            PlaylistRecommendationRequest(
+                                playlistName = currentPlaylist.playlist.name,
+                                browseId = currentPlaylist.playlist.browseId,
+                                radioEndpointParams = currentPlaylist.playlist.radioEndpointParams,
+                                songs = currentSongs,
+                                source = prefs.source,
+                                usedSeedIds = usedSuggestionSeedIds,
+                                previouslyShownIds = previouslyShownSuggestionIds.toSet(),
+                                radioContinuation = suggestionRadioContinuation,
+                                titlePlaylistOffset = suggestionTitlePlaylistOffset,
+                                hideExplicit = prefs.hideExplicit,
+                                hideVideos = prefs.hideVideos,
+                            )
+                        val result = recommendationRepository.loadRecommendations(request)
+                        if (generation != suggestionLoadGeneration) return@launch
+                        usedSuggestionSeedIds = result.usedSeedIds
+                        suggestionRadioContinuation = result.nextRadioContinuation
+                        suggestionTitlePlaylistOffset = result.nextTitlePlaylistOffset
+                        viewedSuggestionIdsInCurrentPool.clear()
+                        result.items
+                            .take(PlaylistRecommendationPolicy.DEFAULT_PAGE_SIZE)
+                            .forEach { viewedSuggestionIdsInCurrentPool.add(it.id) }
+                        _currentSuggestionPage.value = 0
+                        _suggestionPool.value = result.items
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (e: Exception) {
+                        reportException(e)
+                        if (generation == suggestionLoadGeneration && _suggestionPool.value == null) {
+                            _suggestionPool.value = emptyList()
+                        }
+                    } finally {
+                        if (generation == suggestionLoadGeneration) {
+                            _isLoadingSuggestions.value = false
+                        }
+                    }
+                }
         }
 
         suspend fun addSongToPlaylist(
@@ -557,168 +635,40 @@ class LocalPlaylistViewModel
                     return false
                 }
 
-                // Update suggested song IDs to avoid duplicates
-                suggestedSongIds.value = suggestedSongIds.value + song.id
-
+                withContext(Dispatchers.Main.immediate) {
+                    recordShownSuggestionIds(listOf(song.id))
+                }
                 true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 reportException(e)
                 false
             }
         }
 
-        private suspend fun loadNextSuggestionPage() {
-            val queries = suggestionQueries.value
-            val currentIndex = currentSuggestionQueryIndex.value
+        private data class SuggestionPreferences(
+            val source: PlaylistSuggestionSource,
+            val hideExplicit: Boolean,
+            val hideVideos: Boolean,
+        )
 
-            if (currentIndex >= queries.size) return
+        private data class SuggestionTrigger(
+            val effectiveTitle: String,
+            val browseId: String?,
+            val radioEndpointParams: String?,
+            val hasSongs: Boolean,
+            val preferences: SuggestionPreferences,
+        )
 
-            val currentQuery = queries[currentIndex]
+        private data class SuggestionTriggerInput(
+            val trigger: SuggestionTrigger,
+            val playlistName: String,
+            val songs: List<PlaylistSong>,
+        )
 
-            try {
-                val searchFilter = YouTube.SearchFilter.FILTER_SONG
-
-                val result =
-                    YouTube
-                        .search(
-                            query = currentQuery.query,
-                            filter = searchFilter,
-                            useAccountContext = false,
-                        ).getOrNull()
-                        ?: return
-
-                val filteredItems = filterSuggestionItems(result.items).shuffled().take(10)
-
-                // If we got no new items after filtering, try to load more if available
-                if (filteredItems.isEmpty() && (result.continuation != null || currentIndex < queries.size - 1)) {
-                    result.continuation?.let { continuationValue ->
-                        loadMoreFromContinuation(continuationValue)
-                    } ?: run {
-                        currentSuggestionQueryIndex.value = currentIndex + 1
-                        loadNextSuggestionPage()
-                    }
-                    return
-                }
-
-                currentSuggestionPage =
-                    PlaylistSuggestionPage(
-                        items = filteredItems,
-                        continuation = result.continuation,
-                    )
-
-                // Update suggested song IDs to avoid duplicates
-                val newIds = filteredItems.map { item: YTItem -> item.id }.toSet()
-                suggestedSongIds.value = suggestedSongIds.value + newIds
-
-                // Update suggestions state
-                val currentSuggestions = _playlistSuggestions.value
-                val newSuggestions =
-                    if (currentSuggestions == null) {
-                        filteredItems
-                    } else {
-                        currentSuggestions.items + filteredItems
-                    }
-
-                _playlistSuggestions.value =
-                    PlaylistSuggestion(
-                        items = newSuggestions,
-                        continuation = result.continuation,
-                        currentQueryIndex = currentIndex,
-                        totalQueries = queries.size,
-                        query = currentQuery.query,
-                        hasMore = result.continuation != null || currentIndex < queries.size - 1,
-                    )
-            } catch (e: Exception) {
-                reportException(e)
-            }
-        }
-
-        private suspend fun loadMoreFromContinuation(continuation: String) {
-            try {
-                val result =
-                    YouTube
-                        .searchContinuation(
-                            continuation = continuation,
-                            useAccountContext = false,
-                        ).getOrNull()
-                        ?: return
-
-                val filteredItems = filterSuggestionItems(result.items).shuffled().take(10)
-
-                // If we got no new items after filtering, try to move to next query if available
-                if (filteredItems.isEmpty()) {
-                    val currentSuggestions = _playlistSuggestions.value
-                    val queries = suggestionQueries.value
-                    val currentIndex = currentSuggestionQueryIndex.value
-
-                    result.continuation?.let { continuationValue ->
-                        loadMoreFromContinuation(continuationValue)
-                    } ?: run {
-                        if (currentIndex < queries.size - 1) {
-                            currentSuggestionQueryIndex.value = currentIndex + 1
-                            loadNextSuggestionPage()
-                        } else {
-                            // No more items and no more queries
-                            if (currentSuggestions != null) {
-                                _playlistSuggestions.value = currentSuggestions.copy(hasMore = false)
-                            }
-                        }
-                    }
-                    return
-                }
-
-                currentSuggestionPage =
-                    PlaylistSuggestionPage(
-                        items = filteredItems,
-                        continuation = result.continuation,
-                    )
-
-                // Update suggested song IDs to avoid duplicates
-                val moreIds = filteredItems.map { item: YTItem -> item.id }.toSet()
-                suggestedSongIds.value = suggestedSongIds.value + moreIds
-
-                // Update suggestions state
-                val currentSuggestions = _playlistSuggestions.value
-                if (currentSuggestions == null) {
-                    _playlistSuggestions.value =
-                        PlaylistSuggestion(
-                            items = filteredItems,
-                            continuation = result.continuation,
-                            currentQueryIndex = currentSuggestionQueryIndex.value,
-                            totalQueries = suggestionQueries.value.size,
-                            query = suggestionQueries.value.getOrNull(currentSuggestionQueryIndex.value)?.query ?: "",
-                            hasMore = result.continuation != null || currentSuggestionQueryIndex.value < suggestionQueries.value.size - 1,
-                        )
-                } else {
-                    _playlistSuggestions.value =
-                        currentSuggestions.copy(
-                            items = currentSuggestions.items + filteredItems,
-                            continuation = result.continuation,
-                            hasMore = result.continuation != null || currentSuggestions.currentQueryIndex < suggestionQueries.value.size - 1,
-                        )
-                }
-            } catch (e: Exception) {
-                reportException(e)
-            }
-        }
-
-        private suspend fun filterSuggestionItems(items: List<YTItem>): List<YTItem> {
-            val hideExplicit = context.dataStore.data.first()[HideExplicitKey] ?: false
-            val hideVideos = context.dataStore.data.first()[HideVideoKey] ?: false
-
-            var filteredItems =
-                items
-                    .filter { item -> item.id !in suggestedSongIds.value }
-                    .filterBlockedArtists(database.getBlockedArtistIds().toSet())
-
-            if (hideExplicit) {
-                filteredItems = filteredItems.filterExplicit()
-            }
-
-            if (hideVideos) {
-                filteredItems = filteredItems.filterVideo()
-            }
-            return filteredItems
+        private companion object {
+            const val MAX_REMEMBERED_SHOWN_SUGGESTIONS = 150
         }
     }
 
