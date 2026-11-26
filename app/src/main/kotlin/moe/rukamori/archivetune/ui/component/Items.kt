@@ -48,6 +48,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -2246,17 +2249,17 @@ fun SwipeToSongBox(
                 ),
     ) {
         if (offset.value != 0f) {
-            val (iconRes, bg, tint, align) =
+            val (icon, bg, tint, align) =
                 if (offset.value > 0) {
                     Quadruple(
-                        R.drawable.playlist_play,
+                        Icons.AutoMirrored.Filled.PlaylistPlay,
                         MaterialTheme.colorScheme.secondary,
                         MaterialTheme.colorScheme.onSecondary,
                         Alignment.CenterStart,
                     )
                 } else {
                     Quadruple(
-                        R.drawable.queue_music,
+                        Icons.AutoMirrored.Filled.QueueMusic,
                         MaterialTheme.colorScheme.primary,
                         MaterialTheme.colorScheme.onPrimary,
                         Alignment.CenterEnd,
@@ -2273,12 +2276,12 @@ fun SwipeToSongBox(
                 contentAlignment = align,
             ) {
                 Icon(
-                    painter = painterResource(id = iconRes),
+                    imageVector = icon,
                     contentDescription = null,
                     modifier =
                         Modifier
                             .padding(horizontal = 24.dp)
-                            .size(30.dp)
+                            .size(24.dp)
                             .alpha(0.9f),
                     tint = tint,
                 )
