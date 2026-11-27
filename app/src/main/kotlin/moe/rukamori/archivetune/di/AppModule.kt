@@ -15,7 +15,6 @@ import androidx.media3.datasource.cache.CacheEvictor
 import androidx.media3.datasource.cache.CacheSpan
 import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.ContentMetadataMutations
-import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import dagger.Module
@@ -220,22 +219,26 @@ object AppModule {
 
     @Singleton
     @Provides
+    fun providePlayerCacheEvictor(
+        @ApplicationContext context: Context,
+    ): DynamicLruCacheEvictor =
+        DynamicLruCacheEvictor(
+            initialMaxBytes = cacheLimitMegabytesToMaxBytes(context.dataStore.get(MaxSongCacheSizeKey, 1024)),
+        )
+
+    @Singleton
+    @Provides
     @PlayerCache
     fun providePlayerCache(
         @ApplicationContext context: Context,
         databaseProvider: DatabaseProvider,
         cacheInvalidationSignal: CacheInvalidationSignal,
+        playerCacheEvictor: DynamicLruCacheEvictor,
     ): Cache =
         LazyCache {
-            val cacheSize = context.dataStore.get(MaxSongCacheSizeKey, 1024)
-            val evictor =
-                when (cacheSize) {
-                    -1 -> NoOpCacheEvictor()
-                    else -> LeastRecentlyUsedCacheEvictor(cacheSizeMegabytesToBytes(cacheSize))
-                }
             SimpleCache(
                 StorageLocationRepository.cacheDirectory(context, StorageFolderKind.SONG_CACHE),
-                NotifyingCacheEvictor(evictor, cacheInvalidationSignal::notifyChanged),
+                NotifyingCacheEvictor(playerCacheEvictor, cacheInvalidationSignal::notifyChanged),
                 databaseProvider,
             )
         }
@@ -256,7 +259,3 @@ object AppModule {
             )
         }
 }
-
-private const val CacheSizeBytesPerMegabyte = 1024L * 1024L
-
-private fun cacheSizeMegabytesToBytes(sizeMegabytes: Int): Long = sizeMegabytes.toLong().coerceAtLeast(0L) * CacheSizeBytesPerMegabyte

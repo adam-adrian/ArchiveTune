@@ -220,7 +220,9 @@ import moe.rukamori.archivetune.db.entities.Song
 import moe.rukamori.archivetune.db.entities.SongEntity
 import moe.rukamori.archivetune.db.entities.needsRemoteFetch
 import moe.rukamori.archivetune.di.DownloadCache
+import moe.rukamori.archivetune.di.DynamicLruCacheEvictor
 import moe.rukamori.archivetune.di.PlayerCache
+import moe.rukamori.archivetune.di.trimCacheToBytes
 import moe.rukamori.archivetune.extensions.SilentHandler
 import moe.rukamori.archivetune.extensions.collect
 import moe.rukamori.archivetune.extensions.collectLatest
@@ -838,6 +840,9 @@ class MusicService :
     lateinit var playerCache: Cache
 
     @Inject
+    lateinit var playerCacheEvictor: DynamicLruCacheEvictor
+
+    @Inject
     @DownloadCache
     lateinit var downloadCache: Cache
 
@@ -1274,6 +1279,9 @@ class MusicService :
             allowFixedVolume = dataStore.get(UsbBitPerfectFixedVolumeKey, false),
         )
         maxSongCacheSizeMb = dataStore.get(MaxSongCacheSizeKey, DEFAULT_MAX_SONG_CACHE_SIZE_MB)
+        if (::playerCacheEvictor.isInitialized) {
+            playerCacheEvictor.updateMaxSizeMegabytes(maxSongCacheSizeMb)
+        }
         localPlaybackPlayer =
             SwappableLocalPlayer(
                 buildLocalExoPlayer().apply {
@@ -1727,6 +1735,9 @@ class MusicService :
             .distinctUntilChanged()
             .collect(ioScope) { sizeMb ->
                 maxSongCacheSizeMb = sizeMb
+                if (::playerCacheEvictor.isInitialized) {
+                    playerCacheEvictor.updateMaxSizeMegabytes(sizeMb)
+                }
             }
 
         dataStore.data
@@ -4720,6 +4731,9 @@ class MusicService :
         if (::moduleDownloadUtil.isInitialized) {
             moduleDownloadUtil.setActivePlaybackMediaId(null)
         }
+        if (::playerCacheEvictor.isInitialized) {
+            playerCacheEvictor.setProtectedKey(null)
+        }
         abandonAudioFocus()
         closeAudioEffectSession()
         consecutivePlaybackErr = 0
@@ -7212,7 +7226,7 @@ class MusicService :
     }
 
     private fun syncActivePlaybackMediaIdWithDownloads() {
-        if (!::moduleDownloadUtil.isInitialized || !::player.isInitialized) return
+        if (!::player.isInitialized) return
         val activeMediaId =
             if (
                 player.playbackState == Player.STATE_IDLE ||
@@ -7226,7 +7240,12 @@ class MusicService :
                     ?: currentItem?.mediaId
                     ?: currentMediaMetadata.value?.id
             }
-        moduleDownloadUtil.setActivePlaybackMediaId(activeMediaId)
+        if (::moduleDownloadUtil.isInitialized) {
+            moduleDownloadUtil.setActivePlaybackMediaId(activeMediaId)
+        }
+        if (::playerCacheEvictor.isInitialized) {
+            playerCacheEvictor.setProtectedKey(activeMediaId)
+        }
     }
 
     override fun onPlaybackStateChanged(
@@ -8000,36 +8019,12 @@ class MusicService :
 
         withContext(Dispatchers.IO) {
             val cacheDir = StorageLocationRepository.cacheDirectory(this@MusicService, StorageFolderKind.SONG_CACHE)
-            val currentSpace = runCatching { playerCache.cacheSpace }.getOrNull() ?: 0L
-            var totalBytes = if (currentSpace > 0L) currentSpace else cacheDir.directorySizeBytes()
-            if (totalBytes <= limitBytes) return@withContext
-
-            data class Candidate(
-                val key: String,
-                val lastTouchTimestamp: Long,
-                val sizeBytes: Long,
+            trimCacheToBytes(
+                cache = playerCache,
+                limitBytes = limitBytes,
+                protectedKey = if (::playerCacheEvictor.isInitialized) playerCacheEvictor.protectedKey else null,
+                fallbackTotalBytes = { cacheDir.directorySizeBytes() },
             )
-
-            val candidates =
-                runCatching {
-                    playerCache.keys
-                        .mapNotNull { key ->
-                            runCatching {
-                                val spans = playerCache.getCachedSpans(key)
-                                if (spans.isEmpty()) return@runCatching null
-                                val oldestTouch = spans.minOf { it.lastTouchTimestamp }
-                                val sizeBytes = spans.sumOf { it.length }
-                                Candidate(key = key, lastTouchTimestamp = oldestTouch, sizeBytes = sizeBytes)
-                            }.getOrNull()
-                        }.sortedBy { it.lastTouchTimestamp }
-                }.getOrNull().orEmpty()
-
-            for (candidate in candidates) {
-                if (totalBytes <= limitBytes) break
-                val removedSize = candidate.sizeBytes.coerceAtLeast(0L)
-                runCatching { playerCache.removeResource(candidate.key) }
-                totalBytes -= removedSize
-            }
         }
     }
 
@@ -9032,6 +9027,9 @@ class MusicService :
         }
         if (::moduleDownloadUtil.isInitialized) {
             moduleDownloadUtil.setActivePlaybackMediaId(null)
+        }
+        if (::playerCacheEvictor.isInitialized) {
+            playerCacheEvictor.setProtectedKey(null)
         }
         nextStreamPreloader.cancel()
         scopeJob.cancel()
