@@ -7588,6 +7588,15 @@ class MusicService :
                 }
             }
         }
+        if (events.containsAny(
+                Player.EVENT_MEDIA_ITEM_TRANSITION,
+                Player.EVENT_PLAYBACK_STATE_CHANGED,
+                Player.EVENT_TIMELINE_CHANGED,
+                Player.EVENT_POSITION_DISCONTINUITY,
+            )
+        ) {
+            syncActivePlaybackMediaIdWithDownloads()
+        }
     }
 
     override fun onPositionDiscontinuity(
@@ -7630,15 +7639,6 @@ class MusicService :
             if (dataStore.get(PersistentQueueKey, true)) {
                 saveQueueToDisk()
             }
-        }
-        if (events.containsAny(
-                Player.EVENT_MEDIA_ITEM_TRANSITION,
-                Player.EVENT_PLAYBACK_STATE_CHANGED,
-                EVENT_TIMELINE_CHANGED,
-                EVENT_POSITION_DISCONTINUITY,
-            )
-        ) {
-            syncActivePlaybackMediaIdWithDownloads()
         }
         scheduleCrossfade()
     }
