@@ -92,12 +92,9 @@ fun WavySliderExpressive(
 
     isPlaying: Boolean = true,
     isVisible: Boolean = true,
-    showThumb: Boolean = true,
     strokeWidth: Dp = 5.dp,
     thumbRadius: Dp = 8.dp,
-    thumbWidth: Dp = thumbRadius * 2,
-    thumbHeight: Dp = thumbRadius * 2,
-    trackEdgePadding: Dp = if (showThumb) thumbWidth / 2f else 0.dp,
+    trackEdgePadding: Dp = thumbRadius,
     wavelength: Dp = WavyProgressIndicatorDefaults.LinearDeterminateWavelength,
     waveSpeed: Dp = WavyProgressIndicatorDefaults.LinearDeterminateWavelength / 2f,
 
@@ -108,11 +105,7 @@ fun WavySliderExpressive(
 ) {
     val density = LocalDensity.current
     val strokeWidthPx = with(density) { strokeWidth.toPx() }
-    val thumbWidthPx = with(density) { thumbWidth.toPx() }
-    val thumbHeightPx = with(density) { thumbHeight.toPx() }
-    val interactingThumbWidth =
-        if (thumbWidth < strokeWidth * 1.2f) thumbWidth * 0.75f else strokeWidth * 1.2f
-    val interactingThumbWidthPx = with(density) { interactingThumbWidth.toPx() }
+    val thumbRadiusPx = with(density) { thumbRadius.toPx() }
     val trackEdgePaddingPx = with(density) { trackEdgePadding.coerceAtLeast(0.dp).toPx() }
     val thumbLineHeightPx = with(density) { thumbLineHeightWhenInteracting.toPx() }
 
@@ -120,10 +113,9 @@ fun WavySliderExpressive(
         Stroke(width = strokeWidthPx, cap = StrokeCap.Round)
     }
 
-    val latestValueProvider by rememberUpdatedState(value)
     val normalizedValueState = remember(valueRange) {
         derivedStateOf {
-            val v = latestValueProvider()
+            val v = value()
             if (valueRange.endInclusive == valueRange.start) 0f
             else ((v - valueRange.start) / (valueRange.endInclusive - valueRange.start)).coerceIn(0f, 1f)
         }
@@ -162,19 +154,19 @@ fun WavySliderExpressive(
         label = "amplitude"
     )
 
-    val currentHalfWidth = remember(thumbWidth, interactingThumbWidth) {
+    val currentHalfWidth = remember(thumbRadius, strokeWidth) {
         derivedStateOf {
             val fraction = thumbInteractionFraction
-            val idleHalfWidth = thumbWidth / 2f
-            val interactingHalfWidth = interactingThumbWidth / 2f
-            idleHalfWidth * (1f - fraction) + interactingHalfWidth * fraction
+            val radius = thumbRadius
+            val halfStroke = strokeWidth * 0.6f
+            radius * (1f - fraction) + halfStroke * fraction
         }
     }
 
-    val dynamicGapSize = remember(thumbWidth) {
+    val dynamicGapSize = remember {
         derivedStateOf {
             val fraction = thumbInteractionFraction
-            val idleGap = if (thumbWidth < 14.dp) (thumbWidth / 2f) + 2.5.dp else 6.dp
+            val idleGap = 6.dp
             val draggingGap = currentHalfWidth.value + 1.2.dp
             idleGap + (draggingGap - idleGap) * fraction
         }
@@ -187,7 +179,7 @@ fun WavySliderExpressive(
         mutableFloatStateOf(initialNorm)
     }
     var lastProgressUpdateNanos by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(normalizedValueState, isInteracting, enabled) {
+    LaunchedEffect(isInteracting, enabled) {
         snapshotFlow { normalizedValueState.value }.collect { target ->
             if (!enabled || isInteracting) {
                 renderedNormalizedProgress.floatValue = target
@@ -229,7 +221,7 @@ fun WavySliderExpressive(
         }
     }
 
-    val containerHeight = max(WavyProgressIndicatorDefaults.LinearContainerHeight, max(thumbHeight, thumbLineHeightWhenInteracting))
+    val containerHeight = max(WavyProgressIndicatorDefaults.LinearContainerHeight, max(thumbRadius * 2, thumbLineHeightWhenInteracting))
 
     Box(
         modifier = modifier
@@ -301,12 +293,7 @@ fun WavySliderExpressive(
                 trackColor = inactiveTrackColor,
                 stroke = stroke,
                 trackStroke = stroke,
-                gapSize =
-                    if (showThumb) {
-                        2f * dynamicGapSize.value * (1.0f + 0.1573f * animatedAmplitude * animatedAmplitude)
-                    } else {
-                        WavyProgressIndicatorDefaults.LinearIndicatorTrackGapSize
-                    },
+                gapSize = 2f * dynamicGapSize.value * (1.0f + 0.1573f * animatedAmplitude * animatedAmplitude),
                 stopSize = 3.dp,
                 amplitude = { progress -> if (progress > 0f) animatedAmplitude else 0f },
                 wavelength = wavelength,
@@ -316,37 +303,35 @@ fun WavySliderExpressive(
             Spacer(modifier = Modifier.fillMaxWidth().height(containerHeight))
         }
 
-        if (showThumb) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                if (!isVisible) return@Canvas
-                val edgePaddingPx = trackEdgePaddingPx.coerceIn(0f, size.width / 2f)
-                val trackStart = edgePaddingPx
-                val trackEnd = size.width - edgePaddingPx
-                val trackWidth = (trackEnd - trackStart).coerceAtLeast(0f)
-                val thumbY = size.height / 2
-                val renderedProgress = renderedNormalizedProgress.floatValue
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            if (!isVisible) return@Canvas
+            val edgePaddingPx = trackEdgePaddingPx.coerceIn(0f, size.width / 2f)
+            val trackStart = edgePaddingPx
+            val trackEnd = size.width - edgePaddingPx
+            val trackWidth = (trackEnd - trackStart).coerceAtLeast(0f)
+            val thumbY = size.height / 2
+            val renderedProgress = renderedNormalizedProgress.floatValue
 
-                fun lerp(start: Float, stop: Float, fraction: Float): Float {
-                    return start + (stop - start) * fraction
-                }
-
-                val currentWidth = lerp(thumbWidthPx, interactingThumbWidthPx, thumbInteractionFraction)
-                val currentHeight = lerp(thumbHeightPx, thumbLineHeightPx, thumbInteractionFraction)
-                val rawThumbX = trackStart + (trackWidth * renderedProgress)
-                val minThumbCenter = (currentWidth / 2f).coerceAtMost(size.width / 2f)
-                val maxThumbCenter = (size.width - currentWidth / 2f).coerceAtLeast(minThumbCenter)
-                val thumbX = rawThumbX.coerceIn(minThumbCenter, maxThumbCenter)
-
-                drawRoundRect(
-                    color = thumbColor,
-                    topLeft = Offset(
-                        thumbX - currentWidth / 2f,
-                        thumbY - currentHeight / 2f
-                    ),
-                    size = Size(currentWidth, currentHeight),
-                    cornerRadius = CornerRadius(minOf(currentWidth, currentHeight) / 2f)
-                )
+            fun lerp(start: Float, stop: Float, fraction: Float): Float {
+                return start + (stop - start) * fraction
             }
+
+            val currentWidth = lerp(thumbRadiusPx * 2f, strokeWidthPx * 1.2f, thumbInteractionFraction)
+            val currentHeight = lerp(thumbRadiusPx * 2f, thumbLineHeightPx, thumbInteractionFraction)
+            val rawThumbX = trackStart + (trackWidth * renderedProgress)
+            val minThumbCenter = (currentWidth / 2f).coerceAtMost(size.width / 2f)
+            val maxThumbCenter = (size.width - currentWidth / 2f).coerceAtLeast(minThumbCenter)
+            val thumbX = rawThumbX.coerceIn(minThumbCenter, maxThumbCenter)
+            
+            drawRoundRect(
+                color = thumbColor,
+                topLeft = Offset(
+                    thumbX - currentWidth / 2f,
+                    thumbY - currentHeight / 2f
+                ),
+                size = Size(currentWidth, currentHeight),
+                cornerRadius = CornerRadius(currentWidth / 2f)
+            )
         }
 
         val haptics = LocalHapticFeedback.current
@@ -394,10 +379,7 @@ fun WavySliderExpressive(
                                 if (change.position != change.previousPosition) {
                                     change.consume()
                                     latestGestureValue = valueForX(change.position.x)
-                                    val span = valueRange.endInclusive - valueRange.start
-                                    val normalizedGesture =
-                                        if (span <= 0f) 0f else ((latestGestureValue - valueRange.start) / span).coerceIn(0f, 1f)
-                                    val quantized = (normalizedGesture * 20f).toInt()
+                                    val quantized = (latestGestureValue.coerceIn(0f, 1f) * 20f).toInt()
                                     if (quantized != lastHapticStep[0]) {
                                         lastHapticStep[0] = quantized
                                         currentHaptics.value.performHapticFeedback(HapticFeedbackType.TextHandleMove)

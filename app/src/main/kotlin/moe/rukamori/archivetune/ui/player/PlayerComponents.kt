@@ -80,7 +80,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.LaunchedEffect
@@ -158,6 +157,7 @@ import moe.rukamori.archivetune.ui.component.BottomSheetPageState
 import moe.rukamori.archivetune.ui.component.BottomSheetState
 import moe.rukamori.archivetune.ui.component.MenuState
 import moe.rukamori.archivetune.ui.component.PlayerSliderTrack
+import moe.rukamori.archivetune.ui.component.PlayerWavySliderTrack
 import moe.rukamori.archivetune.ui.component.rememberControlledSliderState
 import moe.rukamori.archivetune.ui.component.ResizableIconButton
 import moe.rukamori.archivetune.ui.menu.PlayerMenu
@@ -789,7 +789,6 @@ fun StyledPlaybackSlider(
     isPlaying: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val currentValue by rememberUpdatedState(value)
     when (sliderStyle) {
         SliderStyle.Standard -> {
             Slider(
@@ -804,18 +803,28 @@ fun StyledPlaybackSlider(
 
         SliderStyle.Wavy -> {
             val colors = PlayerSliderColors.wavySliderColors(activeColor)
-            WavySliderExpressive(
-                value = { currentValue },
-                valueRange = valueRange,
-                onValueChange = onValueChange,
+            val sliderState =
+                rememberControlledSliderState(
+                    value = value,
+                    valueRange = valueRange,
+                )
+            Slider(
+                state = sliderState,
+                onValueChange = { updated ->
+                    sliderState.value = updated
+                    onValueChange(updated)
+                },
                 onValueChangeFinished = onValueChangeFinished,
-                activeTrackColor = colors.activeTrackColor,
-                inactiveTrackColor = colors.inactiveTrackColor,
-                thumbColor = colors.thumbColor,
-                isPlaying = isPlaying,
-                showThumb = false,
-                strokeWidth = 5.dp,
-                modifier = modifier.height(36.dp),
+                colors = colors,
+                thumb = { Spacer(modifier = Modifier.size(0.dp)) },
+                track = { state ->
+                    PlayerWavySliderTrack(
+                        sliderState = state,
+                        isPlaying = isPlaying,
+                        colors = colors,
+                    )
+                },
+                modifier = modifier,
             )
         }
 
@@ -847,21 +856,27 @@ fun StyledPlaybackSlider(
 
         SliderStyle.Circular -> {
             val colors = PlayerSliderColors.circularSliderColors(activeColor)
-            WavySliderExpressive(
-                value = { currentValue },
-                valueRange = valueRange,
-                onValueChange = onValueChange,
+            val sliderState =
+                rememberControlledSliderState(
+                    value = value,
+                    valueRange = valueRange,
+                )
+            Slider(
+                state = sliderState,
+                onValueChange = { updated ->
+                    sliderState.value = updated
+                    onValueChange(updated)
+                },
                 onValueChangeFinished = onValueChangeFinished,
-                activeTrackColor = colors.activeTrackColor,
-                inactiveTrackColor = colors.inactiveTrackColor,
-                thumbColor = colors.thumbColor,
-                isPlaying = isPlaying,
-                showThumb = true,
-                strokeWidth = 5.dp,
-                thumbWidth = 4.dp,
-                thumbHeight = 22.dp,
-                thumbLineHeightWhenInteracting = 28.dp,
-                modifier = modifier.height(36.dp),
+                colors = colors,
+                track = { state ->
+                    PlayerWavySliderTrack(
+                        sliderState = state,
+                        isPlaying = isPlaying,
+                        colors = colors,
+                    )
+                },
+                modifier = modifier,
             )
         }
 
