@@ -501,6 +501,7 @@ class MusicService :
 
     @Volatile
     private var maxSongCacheSizeMb: Int = DEFAULT_MAX_SONG_CACHE_SIZE_MB
+    private val songRecoveryGate = PlaybackSongRecoveryGate()
     private val castMimeTypeCache = LruCache<String, String>(128)
     private val mediaOkHttpClient: OkHttpClient by lazy {
         OkHttpClient
@@ -4002,15 +4003,44 @@ class MusicService :
                 }
             }
 
-    private suspend fun recoverSong(
+    private data class SongRecoveryOutcome(
+        val succeeded: Boolean,
+        val hasResolvedDuration: Boolean,
+    )
+
+    private fun launchRecoverSong(
         mediaId: String,
         playbackData: YTPlayerUtils.PlaybackData? = null,
     ) {
+        if (!songRecoveryGate.tryAcquire(mediaId, hasPlaybackData = playbackData != null)) {
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            var succeeded = false
+            var hasResolvedDuration = false
+            try {
+                val outcome = recoverSong(mediaId, playbackData)
+                succeeded = outcome.succeeded
+                hasResolvedDuration = outcome.hasResolvedDuration
+            } finally {
+                songRecoveryGate.finish(
+                    mediaId = mediaId,
+                    succeeded = succeeded,
+                    hasResolvedDuration = hasResolvedDuration,
+                )
+            }
+        }
+    }
+
+    private suspend fun recoverSong(
+        mediaId: String,
+        playbackData: YTPlayerUtils.PlaybackData? = null,
+    ): SongRecoveryOutcome {
         val song = database.song(mediaId).first()
         val mediaMetadata =
             withContext(Dispatchers.Main) {
                 player.findNextMediaItemById(mediaId)?.metadata
-            } ?: return
+            } ?: return SongRecoveryOutcome(succeeded = false, hasResolvedDuration = false)
         val duration =
             song?.song?.duration?.takeIf { it != -1 }
                 ?: mediaMetadata.duration.takeIf { it != -1 }
@@ -4028,12 +4058,23 @@ class MusicService :
                 update(song.song.copy(duration = duration))
             }
         }
-        if (mediaMetadata.isPodcast) return
+        val hasResolvedDuration = duration > 0
+        if (mediaMetadata.isPodcast) {
+            return SongRecoveryOutcome(succeeded = true, hasResolvedDuration = hasResolvedDuration)
+        }
         if (!database.hasRelatedSongs(mediaId)) {
             val relatedEndpoint =
                 YouTube.next(WatchEndpoint(videoId = mediaId)).getOrNull()?.relatedEndpoint
-                    ?: return
-            val relatedPage = YouTube.related(relatedEndpoint).getOrNull() ?: return
+                    ?: return SongRecoveryOutcome(
+                        succeeded = false,
+                        hasResolvedDuration = hasResolvedDuration,
+                    )
+            val relatedPage =
+                YouTube.related(relatedEndpoint).getOrNull()
+                    ?: return SongRecoveryOutcome(
+                        succeeded = false,
+                        hasResolvedDuration = hasResolvedDuration,
+                    )
             database.query {
                 relatedPage.songs
                     .map(SongItem::toMediaMetadata)
@@ -4046,6 +4087,7 @@ class MusicService :
                     }.forEach(::insert)
             }
         }
+        return SongRecoveryOutcome(succeeded = true, hasResolvedDuration = hasResolvedDuration)
     }
 
     fun playQueue(
@@ -8061,15 +8103,17 @@ class MusicService :
                 when {
                     dataSpec.uri.shouldBypassPlayerCache() || (mediaId != null && mediaId in cacheBypassMediaIds) -> directFactory
                     else -> {
+                        val isDownloaded = mediaId != null && downloadCache.isFullyCached(mediaId)
                         if (mediaId != null) {
-                            database.getFormatByIdBlocking(mediaId)?.let { format ->
-                                format.toCastMimeType()?.let { castMimeTypeCache.put(mediaId, it) }
-                                audioNormalizationFactorCache[mediaId] =
-                                    calculateAudioNormalizationFactor(format, normalizeAudio = true)
+                            if (isDownloaded ||
+                                dataSpec.uri.shouldBypassYouTubeResolver() ||
+                                playerCache.getCachedSpans(mediaId).isNotEmpty()
+                            ) {
+                                warmFormatCachesIfNeeded(mediaId)
                             }
-                            scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
+                            launchRecoverSong(mediaId)
                         }
-                        if (mediaId != null && downloadCache.isFullyCached(mediaId)) {
+                        if (isDownloaded) {
                             downloadedFactory
                         } else {
                             streamingFactory
@@ -8077,6 +8121,17 @@ class MusicService :
                     }
                 }
             }
+        }
+    }
+
+    private fun warmFormatCachesIfNeeded(mediaId: String) {
+        if (castMimeTypeCache.get(mediaId) != null && audioNormalizationFactorCache.containsKey(mediaId)) {
+            return
+        }
+        database.getFormatByIdBlocking(mediaId)?.let { format ->
+            format.toCastMimeType()?.let { castMimeTypeCache.put(mediaId, it) }
+            audioNormalizationFactorCache[mediaId] =
+                calculateAudioNormalizationFactor(format, normalizeAudio = true)
         }
     }
 
@@ -8341,7 +8396,7 @@ class MusicService :
                 formatEntity,
             )
         }
-        scope.launch(Dispatchers.IO) { recoverSong(mediaId, nonNullPlayback) }
+        launchRecoverSong(mediaId, nonNullPlayback)
 
         val streamUrl = nonNullPlayback.streamUrl
 
@@ -9033,6 +9088,7 @@ class MusicService :
         }
         nextStreamPreloader.cancel()
         scopeJob.cancel()
+        songRecoveryGate.clear()
     }
 
     override fun onBind(intent: Intent?): android.os.IBinder? {
