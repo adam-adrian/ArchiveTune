@@ -111,7 +111,8 @@ fun PlayerSliderTrack(
     }
 }
 
-// Adapted from saket/squiggly-slider (Apache-2.0) for Material 3 SliderState.trackRange.
+// Adapted from saket/squiggly-slider (Copyright 2019 Saket Narayan, Apache-2.0)
+// for Material 3 SliderState.trackRange.
 private const val SQUIGGLY_SEGMENTS_PER_WAVELENGTH = 10
 private const val SQUIGGLY_WAVE_DURATION_SECONDS = 4f
 
@@ -167,8 +168,8 @@ fun PlayerWavySliderTrack(
     )
 
     var animationProgress by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(isPlaying) {
-        if (!isPlaying) return@LaunchedEffect
+    LaunchedEffect(isPlaying, isDragged) {
+        if (!isPlaying || isDragged) return@LaunchedEffect
         var lastFrameNanos = 0L
         while (isActive) {
             val frameNanos = withFrameNanos { it }
@@ -212,22 +213,45 @@ fun PlayerWavySliderTrack(
                             x = sliderStart.x + (sliderEnd.x - sliderStart.x) * activeFraction,
                             y = center.y,
                         )
-                    drawLine(
-                        color = inactiveTrackColor,
-                        start = sliderValueEnd,
-                        end = sliderEnd,
-                        strokeWidth = strokeWidthPx,
-                        cap = StrokeCap.Round,
-                    )
+                    val direction = if (isRtl) -1f else 1f
+                    val halfStroke = strokeWidthPx / 2f
+                    val inactiveStartX =
+                        if (isRtl) {
+                            sliderValueEnd.x.coerceAtMost(sliderStart.x - halfStroke)
+                        } else {
+                            sliderValueEnd.x.coerceAtLeast(sliderStart.x + halfStroke)
+                        }
+                    val inactiveEndX = sliderEnd.x - direction * halfStroke
+                    if ((inactiveEndX - inactiveStartX) * direction > 0f) {
+                        if (isRtl) {
+                            clipRect(right = sliderValueEnd.x) {
+                                drawLine(
+                                    color = inactiveTrackColor,
+                                    start = Offset(inactiveStartX, center.y),
+                                    end = Offset(inactiveEndX, center.y),
+                                    strokeWidth = strokeWidthPx,
+                                    cap = StrokeCap.Round,
+                                )
+                            }
+                        } else {
+                            clipRect(left = sliderValueEnd.x) {
+                                drawLine(
+                                    color = inactiveTrackColor,
+                                    start = Offset(inactiveStartX, center.y),
+                                    end = Offset(inactiveEndX, center.y),
+                                    strokeWidth = strokeWidthPx,
+                                    cap = StrokeCap.Round,
+                                )
+                            }
+                        }
+                    }
 
                     if (activeFraction <= 0f) return@onDrawBehind
 
-                    val direction = if (isRtl) -1f else 1f
-                    val halfStroke = strokeWidthPx / 2f
                     val activeLength = (size.width * activeFraction - strokeWidthPx).coerceAtLeast(0f)
                     val waveStartX = sliderStart.x + direction * halfStroke
                     val segmentWidth = wavelengthPx / SQUIGGLY_SEGMENTS_PER_WAVELENGTH
-                    val numOfPoints = ceil(activeLength / segmentWidth).toInt() + 1
+                    val numOfPoints = ceil(activeLength / segmentWidth).toInt().coerceAtLeast(1)
                     val twoPi = (2.0 * PI).toFloat()
                     val amplitudePx = animatedAmplitude.toPx()
 

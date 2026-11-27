@@ -819,11 +819,7 @@ fun StyledPlaybackSlider(
                 onValueChangeFinished = onValueChangeFinished,
                 colors = colors,
                 interactionSource = interactionSource,
-                thumb = {
-                    PlayerWavySliderThumb(
-                        colors = colors,
-                    )
-                },
+                thumb = { Spacer(modifier = Modifier.size(0.dp)) },
                 track = { state ->
                     PlayerWavySliderTrack(
                         sliderState = state,
