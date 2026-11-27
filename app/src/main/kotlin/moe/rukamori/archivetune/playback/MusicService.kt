@@ -4703,12 +4703,12 @@ class MusicService :
         queueTitle = null
         waitingForNetworkConnection.value = false
         currentMediaMetadata.value = null
-        if (::moduleDownloadUtil.isInitialized) {
-            moduleDownloadUtil.setActivePlaybackMediaId(null)
-        }
         player.playWhenReady = false
         player.stop()
         player.clearMediaItems()
+        if (::moduleDownloadUtil.isInitialized) {
+            moduleDownloadUtil.setActivePlaybackMediaId(null)
+        }
         abandonAudioFocus()
         closeAudioEffectSession()
         consecutivePlaybackErr = 0
