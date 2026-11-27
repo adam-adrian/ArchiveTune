@@ -157,6 +157,7 @@ import moe.rukamori.archivetune.ui.component.BottomSheetPageState
 import moe.rukamori.archivetune.ui.component.BottomSheetState
 import moe.rukamori.archivetune.ui.component.MenuState
 import moe.rukamori.archivetune.ui.component.PlayerSliderTrack
+import moe.rukamori.archivetune.ui.component.PlayerWavySliderThumb
 import moe.rukamori.archivetune.ui.component.PlayerWavySliderTrack
 import moe.rukamori.archivetune.ui.component.rememberControlledSliderState
 import moe.rukamori.archivetune.ui.component.ResizableIconButton
@@ -803,6 +804,7 @@ fun StyledPlaybackSlider(
 
         SliderStyle.Wavy -> {
             val colors = PlayerSliderColors.wavySliderColors(activeColor)
+            val interactionSource = remember { MutableInteractionSource() }
             val sliderState =
                 rememberControlledSliderState(
                     value = value,
@@ -816,10 +818,17 @@ fun StyledPlaybackSlider(
                 },
                 onValueChangeFinished = onValueChangeFinished,
                 colors = colors,
-                thumb = { Spacer(modifier = Modifier.size(0.dp)) },
+                interactionSource = interactionSource,
+                thumb = {
+                    PlayerWavySliderThumb(
+                        interactionSource = interactionSource,
+                        colors = colors,
+                    )
+                },
                 track = { state ->
                     PlayerWavySliderTrack(
                         sliderState = state,
+                        interactionSource = interactionSource,
                         isPlaying = isPlaying,
                         colors = colors,
                     )
@@ -856,6 +865,7 @@ fun StyledPlaybackSlider(
 
         SliderStyle.Circular -> {
             val colors = PlayerSliderColors.circularSliderColors(activeColor)
+            val interactionSource = remember { MutableInteractionSource() }
             val sliderState =
                 rememberControlledSliderState(
                     value = value,
@@ -869,9 +879,17 @@ fun StyledPlaybackSlider(
                 },
                 onValueChangeFinished = onValueChangeFinished,
                 colors = colors,
+                interactionSource = interactionSource,
+                thumb = {
+                    PlayerWavySliderThumb(
+                        interactionSource = interactionSource,
+                        colors = colors,
+                    )
+                },
                 track = { state ->
                     PlayerWavySliderTrack(
                         sliderState = state,
+                        interactionSource = interactionSource,
                         isPlaying = isPlaying,
                         colors = colors,
                     )
