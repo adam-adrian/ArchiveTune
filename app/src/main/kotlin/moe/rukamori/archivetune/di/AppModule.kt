@@ -11,6 +11,7 @@ import android.content.Context
 import androidx.media3.database.DatabaseProvider
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.Cache
+import androidx.media3.datasource.cache.CacheEvictor
 import androidx.media3.datasource.cache.CacheSpan
 import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.ContentMetadataMutations
@@ -22,6 +23,10 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import moe.rukamori.archivetune.constants.MaxSongCacheSizeKey
 import moe.rukamori.archivetune.db.InternalDatabase
 import moe.rukamori.archivetune.db.MusicDatabase
@@ -32,6 +37,7 @@ import moe.rukamori.archivetune.utils.get
 import java.io.File
 import java.util.NavigableSet
 import java.util.TreeSet
+import javax.inject.Inject
 import javax.inject.Qualifier
 import javax.inject.Singleton
 
@@ -42,6 +48,67 @@ annotation class PlayerCache
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 annotation class DownloadCache
+
+@Singleton
+class CacheInvalidationSignal
+    @Inject
+    constructor() {
+        private val _invalidations =
+            MutableSharedFlow<Unit>(
+                extraBufferCapacity = 1,
+                onBufferOverflow = BufferOverflow.DROP_OLDEST,
+            )
+        val invalidations: SharedFlow<Unit> = _invalidations.asSharedFlow()
+
+        fun notifyChanged() {
+            _invalidations.tryEmit(Unit)
+        }
+    }
+
+internal class NotifyingCacheEvictor(
+    private val delegate: CacheEvictor,
+    private val onCacheChanged: () -> Unit,
+) : CacheEvictor {
+    override fun requiresCacheSpanTouches(): Boolean = delegate.requiresCacheSpanTouches()
+
+    override fun onCacheInitialized() {
+        delegate.onCacheInitialized()
+        onCacheChanged()
+    }
+
+    override fun onStartFile(
+        cache: Cache,
+        key: String,
+        position: Long,
+        length: Long,
+    ) {
+        delegate.onStartFile(cache, key, position, length)
+    }
+
+    override fun onSpanAdded(
+        cache: Cache,
+        span: CacheSpan,
+    ) {
+        delegate.onSpanAdded(cache, span)
+        onCacheChanged()
+    }
+
+    override fun onSpanRemoved(
+        cache: Cache,
+        span: CacheSpan,
+    ) {
+        delegate.onSpanRemoved(cache, span)
+        onCacheChanged()
+    }
+
+    override fun onSpanTouched(
+        cache: Cache,
+        oldSpan: CacheSpan,
+        newSpan: CacheSpan,
+    ) {
+        delegate.onSpanTouched(cache, oldSpan, newSpan)
+    }
+}
 
 internal class LazyCache<T : Cache>(
     private val create: () -> T,
@@ -157,6 +224,7 @@ object AppModule {
     fun providePlayerCache(
         @ApplicationContext context: Context,
         databaseProvider: DatabaseProvider,
+        cacheInvalidationSignal: CacheInvalidationSignal,
     ): Cache =
         LazyCache {
             val cacheSize = context.dataStore.get(MaxSongCacheSizeKey, 1024)
@@ -167,7 +235,7 @@ object AppModule {
                 }
             SimpleCache(
                 StorageLocationRepository.cacheDirectory(context, StorageFolderKind.SONG_CACHE),
-                evictor,
+                NotifyingCacheEvictor(evictor, cacheInvalidationSignal::notifyChanged),
                 databaseProvider,
             )
         }
@@ -178,11 +246,12 @@ object AppModule {
     fun provideDownloadCache(
         @ApplicationContext context: Context,
         databaseProvider: DatabaseProvider,
+        cacheInvalidationSignal: CacheInvalidationSignal,
     ): Cache =
         LazyCache {
             SimpleCache(
                 StorageLocationRepository.cacheDirectory(context, StorageFolderKind.DOWNLOADS),
-                NoOpCacheEvictor(),
+                NotifyingCacheEvictor(NoOpCacheEvictor(), cacheInvalidationSignal::notifyChanged),
                 databaseProvider,
             )
         }
