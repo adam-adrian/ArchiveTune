@@ -496,6 +496,9 @@ class MusicService :
     )
     private val remotePlaybackTrackingUrlCache = ConcurrentHashMap<String, String>()
     private val cacheBypassMediaIds = ConcurrentHashMap.newKeySet<String>()
+
+    @Volatile
+    private var maxSongCacheSizeMb: Int = DEFAULT_MAX_SONG_CACHE_SIZE_MB
     private val castMimeTypeCache = LruCache<String, String>(128)
     private val mediaOkHttpClient: OkHttpClient by lazy {
         OkHttpClient
@@ -1270,6 +1273,7 @@ class MusicService :
             driver = dataStore[UsbBitPerfectDriverKey].toEnum(UsbBitPerfectDriver.ANDROID),
             allowFixedVolume = dataStore.get(UsbBitPerfectFixedVolumeKey, false),
         )
+        maxSongCacheSizeMb = dataStore.get(MaxSongCacheSizeKey, DEFAULT_MAX_SONG_CACHE_SIZE_MB)
         localPlaybackPlayer =
             SwappableLocalPlayer(
                 buildLocalExoPlayer().apply {
@@ -1719,8 +1723,15 @@ class MusicService :
             }
 
         dataStore.data
+            .map { prefs -> prefs[MaxSongCacheSizeKey] ?: DEFAULT_MAX_SONG_CACHE_SIZE_MB }
+            .distinctUntilChanged()
+            .collect(ioScope) { sizeMb ->
+                maxSongCacheSizeMb = sizeMb
+            }
+
+        dataStore.data
             .map { prefs ->
-                (prefs[SmartTrimmerKey] ?: false) to (prefs[MaxSongCacheSizeKey] ?: 1024)
+                (prefs[SmartTrimmerKey] ?: false) to (prefs[MaxSongCacheSizeKey] ?: DEFAULT_MAX_SONG_CACHE_SIZE_MB)
             }.debounce(300)
             .distinctUntilChanged()
             .collectLatest(ioScope) { (enabled, maxSongCacheSizeMb) ->
@@ -8040,7 +8051,11 @@ class MusicService :
                 .setCacheWriteDataSinkFactory(null)
         val streamingFactory = DataSource.Factory {
             createPlayerCacheDataSourceFactory(
-                cacheWriteEnabled = !isLowDataModeActive(),
+                cacheWriteEnabled =
+                    shouldWriteToPlayerCache(
+                        lowDataModeActive = isLowDataModeActive(),
+                        maxSongCacheSizeMb = maxSongCacheSizeMb,
+                    ),
             ).createDataSource()
         }
         val directFactory = createResolvedUpstreamDataSourceFactory()
@@ -8278,7 +8293,13 @@ class MusicService :
         ) {
             throw Cache.CacheException("Cached audio does not match the resolved stream")
         }
-        if (mediaId !in cacheBypassMediaIds) {
+        if (shouldPersistPlayerCacheMetadata(
+                cacheBypassed = mediaId in cacheBypassMediaIds,
+                lowDataModeActive = lowDataModeActive,
+                maxSongCacheSizeMb = maxSongCacheSizeMb,
+                hasExistingCachedSpans = cachedMetadata != null,
+            )
+        ) {
             val mutations = ContentMetadataMutations()
                 .set(PLAYBACK_FORMAT_ID_METADATA_KEY, format.itag.toLong())
             if (resolvedContentLength > 0L) {
@@ -9258,6 +9279,7 @@ class MusicService :
         private const val DISCORD_HOLD_TIMEOUT_MS = 7_000L
         private const val MAX_OFFICIAL_AUDIO_SOURCES = 256
         private const val OFFICIAL_AUDIO_CURRENT_ITEM_SWAP_WINDOW_MS = 5_000L
+        private const val DEFAULT_MAX_SONG_CACHE_SIZE_MB = 1024
         const val CHANNEL_ID = "music_channel_01"
         const val ACTION_MEDIA_NOTIFICATION_DISMISSED =
             "moe.rukamori.archivetune.action.MEDIA_NOTIFICATION_DISMISSED"
