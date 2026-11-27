@@ -75,7 +75,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -789,7 +788,6 @@ fun StyledPlaybackSlider(
     activeColor: Color,
     isPlaying: Boolean,
     modifier: Modifier = Modifier,
-    isPreview: Boolean = false,
 ) {
     val currentValue by rememberUpdatedState(value)
     when (sliderStyle) {
@@ -806,7 +804,6 @@ fun StyledPlaybackSlider(
 
         SliderStyle.Wavy -> {
             val colors = PlayerSliderColors.wavySliderColors(activeColor)
-            val wavyModifier = if (isPreview) modifier else modifier.height(36.dp)
             WavySliderExpressive(
                 value = { currentValue },
                 valueRange = valueRange,
@@ -817,20 +814,8 @@ fun StyledPlaybackSlider(
                 thumbColor = colors.thumbColor,
                 isPlaying = isPlaying,
                 showThumb = false,
-                strokeWidth = if (isPreview) 3.dp else 5.dp,
-                wavelength =
-                    if (isPreview) {
-                        14.dp
-                    } else {
-                        WavyProgressIndicatorDefaults.LinearDeterminateWavelength
-                    },
-                waveSpeed =
-                    if (isPreview) {
-                        7.dp
-                    } else {
-                        WavyProgressIndicatorDefaults.LinearDeterminateWavelength / 2f
-                    },
-                modifier = wavyModifier,
+                strokeWidth = 5.dp,
+                modifier = modifier.height(36.dp),
             )
         }
 
@@ -862,7 +847,6 @@ fun StyledPlaybackSlider(
 
         SliderStyle.Circular -> {
             val colors = PlayerSliderColors.circularSliderColors(activeColor)
-            val circularModifier = if (isPreview) modifier else modifier.height(36.dp)
             WavySliderExpressive(
                 value = { currentValue },
                 valueRange = valueRange,
@@ -873,23 +857,11 @@ fun StyledPlaybackSlider(
                 thumbColor = colors.thumbColor,
                 isPlaying = isPlaying,
                 showThumb = true,
-                strokeWidth = if (isPreview) 3.dp else 5.dp,
-                thumbWidth = if (isPreview) 3.dp else 4.dp,
-                thumbHeight = if (isPreview) 16.dp else 22.dp,
-                thumbLineHeightWhenInteracting = if (isPreview) 16.dp else 28.dp,
-                wavelength =
-                    if (isPreview) {
-                        14.dp
-                    } else {
-                        WavyProgressIndicatorDefaults.LinearDeterminateWavelength
-                    },
-                waveSpeed =
-                    if (isPreview) {
-                        7.dp
-                    } else {
-                        WavyProgressIndicatorDefaults.LinearDeterminateWavelength / 2f
-                    },
-                modifier = circularModifier,
+                strokeWidth = 5.dp,
+                thumbWidth = 4.dp,
+                thumbHeight = 22.dp,
+                thumbLineHeightWhenInteracting = 28.dp,
+                modifier = modifier.height(36.dp),
             )
         }
 

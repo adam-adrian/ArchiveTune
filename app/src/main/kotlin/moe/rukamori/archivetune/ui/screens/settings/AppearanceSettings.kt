@@ -448,7 +448,16 @@ fun AppearanceSettings(navController: NavController) {
             else -> true
         }
     val isPlayerSliderStyleEnabled =
-        isPlayerStyleCustomizationEnabled && playerDesignStyle != PlayerDesignStyle.V5
+        when (playerDesignStyle) {
+            PlayerDesignStyle.V1,
+            PlayerDesignStyle.V2,
+            PlayerDesignStyle.V3,
+            PlayerDesignStyle.V4,
+            PlayerDesignStyle.V6,
+            -> true
+
+            else -> false
+        }
     val isVolumeBarSupported =
         playerDesignStyle == PlayerDesignStyle.V7 ||
             playerDesignStyle == PlayerDesignStyle.V8
@@ -1381,7 +1390,6 @@ private fun SliderStyleOptionCard(
                 onValueChangeFinished = {},
                 activeColor = MaterialTheme.colorScheme.primary,
                 isPlaying = true,
-                isPreview = true,
                 modifier =
                     Modifier
                         .fillMaxWidth()
