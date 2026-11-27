@@ -874,7 +874,9 @@ fun StyledPlaybackSlider(
                 isPlaying = isPlaying,
                 showThumb = true,
                 strokeWidth = if (isPreview) 3.dp else 5.dp,
-                thumbRadius = if (isPreview) 5.dp else 8.dp,
+                thumbWidth = if (isPreview) 3.dp else 4.dp,
+                thumbHeight = if (isPreview) 16.dp else 22.dp,
+                thumbLineHeightWhenInteracting = if (isPreview) 16.dp else 28.dp,
                 wavelength =
                     if (isPreview) {
                         14.dp

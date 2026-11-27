@@ -95,7 +95,9 @@ fun WavySliderExpressive(
     showThumb: Boolean = true,
     strokeWidth: Dp = 5.dp,
     thumbRadius: Dp = 8.dp,
-    trackEdgePadding: Dp = if (showThumb) thumbRadius else 0.dp,
+    thumbWidth: Dp = thumbRadius * 2,
+    thumbHeight: Dp = thumbRadius * 2,
+    trackEdgePadding: Dp = if (showThumb) thumbWidth / 2f else 0.dp,
     wavelength: Dp = WavyProgressIndicatorDefaults.LinearDeterminateWavelength,
     waveSpeed: Dp = WavyProgressIndicatorDefaults.LinearDeterminateWavelength / 2f,
 
@@ -106,7 +108,11 @@ fun WavySliderExpressive(
 ) {
     val density = LocalDensity.current
     val strokeWidthPx = with(density) { strokeWidth.toPx() }
-    val thumbRadiusPx = with(density) { thumbRadius.toPx() }
+    val thumbWidthPx = with(density) { thumbWidth.toPx() }
+    val thumbHeightPx = with(density) { thumbHeight.toPx() }
+    val interactingThumbWidth =
+        if (thumbWidth < strokeWidth * 1.2f) thumbWidth * 0.75f else strokeWidth * 1.2f
+    val interactingThumbWidthPx = with(density) { interactingThumbWidth.toPx() }
     val trackEdgePaddingPx = with(density) { trackEdgePadding.coerceAtLeast(0.dp).toPx() }
     val thumbLineHeightPx = with(density) { thumbLineHeightWhenInteracting.toPx() }
 
@@ -156,19 +162,19 @@ fun WavySliderExpressive(
         label = "amplitude"
     )
 
-    val currentHalfWidth = remember(thumbRadius, strokeWidth) {
+    val currentHalfWidth = remember(thumbWidth, interactingThumbWidth) {
         derivedStateOf {
             val fraction = thumbInteractionFraction
-            val radius = thumbRadius
-            val halfStroke = strokeWidth * 0.6f
-            radius * (1f - fraction) + halfStroke * fraction
+            val idleHalfWidth = thumbWidth / 2f
+            val interactingHalfWidth = interactingThumbWidth / 2f
+            idleHalfWidth * (1f - fraction) + interactingHalfWidth * fraction
         }
     }
 
-    val dynamicGapSize = remember(thumbRadius) {
+    val dynamicGapSize = remember(thumbWidth) {
         derivedStateOf {
             val fraction = thumbInteractionFraction
-            val idleGap = if (thumbRadius < 7.dp) thumbRadius * 0.8f else 6.dp
+            val idleGap = if (thumbWidth < 14.dp) (thumbWidth / 2f) + 2.5.dp else 6.dp
             val draggingGap = currentHalfWidth.value + 1.2.dp
             idleGap + (draggingGap - idleGap) * fraction
         }
@@ -223,7 +229,7 @@ fun WavySliderExpressive(
         }
     }
 
-    val containerHeight = max(WavyProgressIndicatorDefaults.LinearContainerHeight, max(thumbRadius * 2, thumbLineHeightWhenInteracting))
+    val containerHeight = max(WavyProgressIndicatorDefaults.LinearContainerHeight, max(thumbHeight, thumbLineHeightWhenInteracting))
 
     Box(
         modifier = modifier
@@ -324,8 +330,8 @@ fun WavySliderExpressive(
                     return start + (stop - start) * fraction
                 }
 
-                val currentWidth = lerp(thumbRadiusPx * 2f, strokeWidthPx * 1.2f, thumbInteractionFraction)
-                val currentHeight = lerp(thumbRadiusPx * 2f, thumbLineHeightPx, thumbInteractionFraction)
+                val currentWidth = lerp(thumbWidthPx, interactingThumbWidthPx, thumbInteractionFraction)
+                val currentHeight = lerp(thumbHeightPx, thumbLineHeightPx, thumbInteractionFraction)
                 val rawThumbX = trackStart + (trackWidth * renderedProgress)
                 val minThumbCenter = (currentWidth / 2f).coerceAtMost(size.width / 2f)
                 val maxThumbCenter = (size.width - currentWidth / 2f).coerceAtLeast(minThumbCenter)
@@ -338,7 +344,7 @@ fun WavySliderExpressive(
                         thumbY - currentHeight / 2f
                     ),
                     size = Size(currentWidth, currentHeight),
-                    cornerRadius = CornerRadius(currentWidth / 2f)
+                    cornerRadius = CornerRadius(minOf(currentWidth, currentHeight) / 2f)
                 )
             }
         }

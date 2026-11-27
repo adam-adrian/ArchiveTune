@@ -447,6 +447,8 @@ fun AppearanceSettings(navController: NavController) {
 
             else -> true
         }
+    val isPlayerSliderStyleEnabled =
+        isPlayerStyleCustomizationEnabled && playerDesignStyle != PlayerDesignStyle.V5
     val isVolumeBarSupported =
         playerDesignStyle == PlayerDesignStyle.V7 ||
             playerDesignStyle == PlayerDesignStyle.V8
@@ -488,8 +490,8 @@ fun AppearanceSettings(navController: NavController) {
         }
     }
 
-    LaunchedEffect(isPlayerStyleCustomizationEnabled) {
-        if (!isPlayerStyleCustomizationEnabled) {
+    LaunchedEffect(isPlayerSliderStyleEnabled) {
+        if (!isPlayerSliderStyleEnabled) {
             showSliderOptionDialog = false
         }
     }
@@ -501,7 +503,7 @@ fun AppearanceSettings(navController: NavController) {
         )
     }
 
-    if (showSliderOptionDialog && isPlayerStyleCustomizationEnabled) {
+    if (showSliderOptionDialog && isPlayerSliderStyleEnabled) {
         val sliderStyles =
             remember {
                 listOf(
@@ -1042,7 +1044,7 @@ fun AppearanceSettings(navController: NavController) {
                         onClick = {
                             showSliderOptionDialog = true
                         },
-                        isEnabled = isPlayerStyleCustomizationEnabled,
+                        isEnabled = isPlayerSliderStyleEnabled,
                     )
                 }
 
