@@ -19,10 +19,13 @@ import android.view.View
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -63,6 +66,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -443,6 +447,17 @@ fun AppearanceSettings(navController: NavController) {
 
             else -> true
         }
+    val isPlayerSliderStyleEnabled =
+        when (playerDesignStyle) {
+            PlayerDesignStyle.V1,
+            PlayerDesignStyle.V2,
+            PlayerDesignStyle.V3,
+            PlayerDesignStyle.V4,
+            PlayerDesignStyle.V6,
+            -> true
+
+            else -> false
+        }
     val isVolumeBarSupported =
         playerDesignStyle == PlayerDesignStyle.V7 ||
             playerDesignStyle == PlayerDesignStyle.V8
@@ -484,8 +499,8 @@ fun AppearanceSettings(navController: NavController) {
         }
     }
 
-    LaunchedEffect(isPlayerStyleCustomizationEnabled) {
-        if (!isPlayerStyleCustomizationEnabled) {
+    LaunchedEffect(isPlayerSliderStyleEnabled) {
+        if (!isPlayerSliderStyleEnabled) {
             showSliderOptionDialog = false
         }
     }
@@ -497,7 +512,7 @@ fun AppearanceSettings(navController: NavController) {
         )
     }
 
-    if (showSliderOptionDialog && isPlayerStyleCustomizationEnabled) {
+    if (showSliderOptionDialog && isPlayerSliderStyleEnabled) {
         val sliderStyles =
             remember {
                 listOf(
@@ -1038,7 +1053,7 @@ fun AppearanceSettings(navController: NavController) {
                         onClick = {
                             showSliderOptionDialog = true
                         },
-                        isEnabled = isPlayerStyleCustomizationEnabled,
+                        isEnabled = isPlayerSliderStyleEnabled,
                     )
                 }
 
@@ -1341,9 +1356,7 @@ private fun SliderStyleOptionCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var sliderValue by remember {
-        mutableFloatStateOf(0.5f)
-    }
+    val interactionSource = remember { MutableInteractionSource() }
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1356,22 +1369,45 @@ private fun SliderStyleOptionCard(
                     1.dp,
                     if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
                     RoundedCornerShape(16.dp),
-                ).clickable(onClick = onClick)
-                .padding(16.dp),
+                ).clickable(
+                    interactionSource = interactionSource,
+                    indication = LocalIndication.current,
+                    onClick = onClick,
+                ).padding(16.dp),
     ) {
-        StyledPlaybackSlider(
-            sliderStyle = sliderStyle,
-            value = sliderValue,
-            valueRange = 0f..1f,
-            onValueChange = { sliderValue = it },
-            onValueChangeFinished = {},
-            activeColor = MaterialTheme.colorScheme.primary,
-            isPlaying = true,
+        Box(
+            contentAlignment = Alignment.Center,
             modifier =
                 Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-        )
+        ) {
+            StyledPlaybackSlider(
+                sliderStyle = sliderStyle,
+                value = 0.5f,
+                valueRange = 0f..1f,
+                onValueChange = {},
+                onValueChangeFinished = {},
+                activeColor = MaterialTheme.colorScheme.primary,
+                isPlaying = true,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clearAndSetSemantics {},
+            )
+
+            Box(
+                modifier =
+                    Modifier
+                        .matchParentSize()
+                        .clearAndSetSemantics {}
+                        .clickable(
+                            interactionSource = interactionSource,
+                            indication = null,
+                            onClick = onClick,
+                        ),
+            )
+        }
 
         Text(
             text = sliderStyleLabel(sliderStyle),
