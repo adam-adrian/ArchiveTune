@@ -4703,6 +4703,9 @@ class MusicService :
         queueTitle = null
         waitingForNetworkConnection.value = false
         currentMediaMetadata.value = null
+        if (::moduleDownloadUtil.isInitialized) {
+            moduleDownloadUtil.setActivePlaybackMediaId(null)
+        }
         player.playWhenReady = false
         player.stop()
         player.clearMediaItems()
@@ -7111,6 +7114,7 @@ class MusicService :
 
         val timelineEmpty = player.currentTimeline.isEmpty || player.mediaItemCount == 0 || player.currentMediaItem == null
         currentMediaMetadata.value = if (timelineEmpty) null else (mediaItem?.metadata ?: player.currentMetadata)
+        syncActivePlaybackMediaIdWithDownloads()
 
         widgetUpdater.update()
 
@@ -7196,10 +7200,29 @@ class MusicService :
         return downloadCache.getCachedSpans(selection.cacheKey).sumOf { span -> span.length.coerceAtLeast(0L) }
     }
 
+    private fun syncActivePlaybackMediaIdWithDownloads() {
+        if (!::moduleDownloadUtil.isInitialized || !::player.isInitialized) return
+        val activeMediaId =
+            if (
+                player.playbackState == Player.STATE_IDLE ||
+                player.playbackState == Player.STATE_ENDED ||
+                player.mediaItemCount == 0
+            ) {
+                null
+            } else {
+                val currentItem = player.currentMediaItem
+                currentItem?.localConfiguration?.customCacheKey
+                    ?: currentItem?.mediaId
+                    ?: currentMediaMetadata.value?.id
+            }
+        moduleDownloadUtil.setActivePlaybackMediaId(activeMediaId)
+    }
+
     override fun onPlaybackStateChanged(
         @Player.State playbackState: Int,
     ) {
         super.onPlaybackStateChanged(playbackState)
+        syncActivePlaybackMediaIdWithDownloads()
 
         updateHistoryTrackingPlaybackState()
         if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
@@ -7607,6 +7630,15 @@ class MusicService :
             if (dataStore.get(PersistentQueueKey, true)) {
                 saveQueueToDisk()
             }
+        }
+        if (events.containsAny(
+                Player.EVENT_MEDIA_ITEM_TRANSITION,
+                Player.EVENT_PLAYBACK_STATE_CHANGED,
+                EVENT_TIMELINE_CHANGED,
+                EVENT_POSITION_DISCONTINUITY,
+            )
+        ) {
+            syncActivePlaybackMediaIdWithDownloads()
         }
         scheduleCrossfade()
     }
@@ -8976,6 +9008,9 @@ class MusicService :
             player.removeListener(sleepTimer)
             player.release()
         } catch (_: Exception) {
+        }
+        if (::moduleDownloadUtil.isInitialized) {
+            moduleDownloadUtil.setActivePlaybackMediaId(null)
         }
         nextStreamPreloader.cancel()
         scopeJob.cancel()

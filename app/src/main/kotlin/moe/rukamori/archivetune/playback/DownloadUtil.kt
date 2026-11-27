@@ -99,6 +99,15 @@ class DownloadUtil
         private val downloadPreloadLock = Any()
         private val playbackCacheReuseIds = ConcurrentHashMap.newKeySet<String>()
         private val persistedMetadata = ConcurrentHashMap<String, DownloadMetadataSignature>()
+        private val playerCacheDuplicateEvictor =
+            PlayerCacheDuplicateEvictor(
+                playerCache = playerCache,
+                isDownloadCompleted = { mediaId -> downloads.value[mediaId]?.state == Download.STATE_COMPLETED },
+                scheduleEviction = ::schedulePlayerCacheEviction,
+                onEvictionFailure = { mediaId, error ->
+                    Timber.tag(TAG).w(error, "Failed to evict duplicate playerCache entry for %s", mediaId)
+                },
+            )
 
         private var downloadPreloadTargetId: String? = null
         private var downloadPreloadJob: Job? = null
@@ -242,6 +251,7 @@ class DownloadUtil
                             if (download.state == Download.STATE_COMPLETED) {
                                 scheduleDownloadedArtwork(download.request.id)
                                 playbackCacheReuseIds.remove(download.request.id)
+                                playerCacheDuplicateEvictor.onDownloadCompleted(download.request.id)
                             } else if (download.state == Download.STATE_FAILED) {
                                 playbackCacheReuseIds.remove(download.request.id)
                                 invalidateResolvedStream(download.request.id)
@@ -264,6 +274,7 @@ class DownloadUtil
                             downloads.update { map -> map - download.request.id }
                             cancelDownloadedArtworkJob(download.request.id)
                             playbackCacheReuseIds.remove(download.request.id)
+                            playerCacheDuplicateEvictor.onDownloadRemoved(download.request.id)
                             persistedMetadata.remove(download.request.id)
                             downloadScope.launch {
                                 downloadedArtworkRepository.remove(download.request.id)
@@ -285,6 +296,11 @@ class DownloadUtil
                 downloads.update { current ->
                     result.apply { putAll(current) }
                 }
+                for (download in result.values) {
+                    if (download.state == Download.STATE_COMPLETED) {
+                        playerCacheDuplicateEvictor.evictIfEligible(download.request.id)
+                    }
+                }
                 downloadedArtworkRepository.retainForDownloads(result.keys)
                 try {
                     restoreDownloadMetadata(result.keys)
@@ -304,6 +320,16 @@ class DownloadUtil
                     delay(DOWNLOAD_PROGRESS_REFRESH_INTERVAL_MS)
                     refreshActiveDownloadSnapshots()
                 }
+            }
+        }
+
+        fun setActivePlaybackMediaId(mediaId: String?) {
+            playerCacheDuplicateEvictor.setActivePlaybackMediaId(mediaId)
+        }
+
+        private fun schedulePlayerCacheEviction(mediaId: String) {
+            downloadScope.launch {
+                playerCacheDuplicateEvictor.evictIfEligible(mediaId)
             }
         }
 
