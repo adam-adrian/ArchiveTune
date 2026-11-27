@@ -821,7 +821,6 @@ fun StyledPlaybackSlider(
                 interactionSource = interactionSource,
                 thumb = {
                     PlayerWavySliderThumb(
-                        interactionSource = interactionSource,
                         colors = colors,
                     )
                 },
@@ -882,7 +881,6 @@ fun StyledPlaybackSlider(
                 interactionSource = interactionSource,
                 thumb = {
                     PlayerWavySliderThumb(
-                        interactionSource = interactionSource,
                         colors = colors,
                     )
                 },

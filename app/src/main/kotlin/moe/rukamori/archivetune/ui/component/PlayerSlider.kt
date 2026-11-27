@@ -12,8 +12,6 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Box
@@ -27,7 +25,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.SliderColors
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SliderState
-import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -120,7 +117,6 @@ private const val SQUIGGLY_WAVE_DURATION_SECONDS = 4f
 
 @Composable
 fun PlayerWavySliderThumb(
-    interactionSource: MutableInteractionSource,
     colors: SliderColors,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
@@ -140,14 +136,6 @@ fun PlayerWavySliderThumb(
         Spacer(
             Modifier
                 .size(thumbSize)
-                .indication(
-                    interactionSource = interactionSource,
-                    indication =
-                        ripple(
-                            bounded = false,
-                            radius = maxOf(thumbSize.width, thumbSize.height) + 4.dp,
-                        ),
-                ).hoverable(interactionSource = interactionSource)
                 .background(thumbColor, shape),
         )
     }
