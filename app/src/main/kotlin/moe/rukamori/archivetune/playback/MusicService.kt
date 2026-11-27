@@ -4706,6 +4706,9 @@ class MusicService :
         player.playWhenReady = false
         player.stop()
         player.clearMediaItems()
+        if (::moduleDownloadUtil.isInitialized) {
+            moduleDownloadUtil.setActivePlaybackMediaId(null)
+        }
         abandonAudioFocus()
         closeAudioEffectSession()
         consecutivePlaybackErr = 0
@@ -7111,6 +7114,7 @@ class MusicService :
 
         val timelineEmpty = player.currentTimeline.isEmpty || player.mediaItemCount == 0 || player.currentMediaItem == null
         currentMediaMetadata.value = if (timelineEmpty) null else (mediaItem?.metadata ?: player.currentMetadata)
+        syncActivePlaybackMediaIdWithDownloads()
 
         widgetUpdater.update()
 
@@ -7196,10 +7200,29 @@ class MusicService :
         return downloadCache.getCachedSpans(selection.cacheKey).sumOf { span -> span.length.coerceAtLeast(0L) }
     }
 
+    private fun syncActivePlaybackMediaIdWithDownloads() {
+        if (!::moduleDownloadUtil.isInitialized || !::player.isInitialized) return
+        val activeMediaId =
+            if (
+                player.playbackState == Player.STATE_IDLE ||
+                player.playbackState == Player.STATE_ENDED ||
+                player.mediaItemCount == 0
+            ) {
+                null
+            } else {
+                val currentItem = player.currentMediaItem
+                currentItem?.localConfiguration?.customCacheKey
+                    ?: currentItem?.mediaId
+                    ?: currentMediaMetadata.value?.id
+            }
+        moduleDownloadUtil.setActivePlaybackMediaId(activeMediaId)
+    }
+
     override fun onPlaybackStateChanged(
         @Player.State playbackState: Int,
     ) {
         super.onPlaybackStateChanged(playbackState)
+        syncActivePlaybackMediaIdWithDownloads()
 
         updateHistoryTrackingPlaybackState()
         if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
@@ -7564,6 +7587,15 @@ class MusicService :
                     saveQueueToDisk()
                 }
             }
+        }
+        if (events.containsAny(
+                Player.EVENT_MEDIA_ITEM_TRANSITION,
+                Player.EVENT_PLAYBACK_STATE_CHANGED,
+                Player.EVENT_TIMELINE_CHANGED,
+                Player.EVENT_POSITION_DISCONTINUITY,
+            )
+        ) {
+            syncActivePlaybackMediaIdWithDownloads()
         }
     }
 
@@ -8977,6 +9009,9 @@ class MusicService :
             player.release()
         } catch (_: Exception) {
         }
+        if (::moduleDownloadUtil.isInitialized) {
+            moduleDownloadUtil.setActivePlaybackMediaId(null)
+        }
         nextStreamPreloader.cancel()
         scopeJob.cancel()
     }
@@ -9234,7 +9269,6 @@ class MusicService :
         private const val TOGETHER_INACTIVITY_NOTIFICATION_ID = 892
         private const val TOGETHER_HOST_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000L
         const val ERROR_CODE_NO_STREAM = 1000001
-        private const val PLAYBACK_FORMAT_ID_METADATA_KEY = "archivetune_playback_format_id"
         const val CHUNK_LENGTH = 8 * 1024 * 1024L
         val RETRYABLE_STREAM_RESPONSE_CODES = setOf(403, 404, 410, 416)
         const val PERSISTENT_QUEUE_FILE = "persistent_queue.data"
