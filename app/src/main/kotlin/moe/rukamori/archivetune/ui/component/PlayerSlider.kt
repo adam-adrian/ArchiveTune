@@ -240,17 +240,14 @@ fun PlayerWavySliderTrack(
                     val numOfPoints = ceil(activeLength / segmentWidth).toInt().coerceAtLeast(1)
                     val twoPi = (2.0 * PI).toFloat()
                     val amplitudePx = animatedAmplitude.toPx()
-                    val transitionWidth = wavelengthPx * 0.75f
 
                     path.rewind()
                     var distance = 0f
                     for (point in 0..numOfPoints) {
                         val proportionOfWavelength = distance / wavelengthPx
                         val radiansX = proportionOfWavelength * twoPi + (twoPi * animationProgress)
-                        val t = ((activeLength - distance) / transitionWidth).coerceIn(0f, 1f)
-                        val taper = t * t * (3f - 2f * t)
                         val offsetX = waveStartX + direction * distance
-                        val offsetY = center.y + (sin(radiansX) * amplitudePx * taper)
+                        val offsetY = center.y + (sin(radiansX) * amplitudePx)
                         if (point == 0) {
                             path.moveTo(offsetX, offsetY)
                         } else {
