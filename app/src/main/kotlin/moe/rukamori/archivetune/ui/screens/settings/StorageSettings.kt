@@ -149,44 +149,65 @@ private enum class StorageLimitTarget(
     IMAGE_CACHE(R.string.max_image_cache_size),
 }
 
+private enum class StorageClearAction(
+    @StringRes val clearTitleRes: Int,
+    @StringRes val clearMessageRes: Int,
+) {
+    DOWNLOADS(
+        clearTitleRes = R.string.clear_all_downloads,
+        clearMessageRes = R.string.clear_downloads_dialog,
+    ),
+    SONG_CACHE(
+        clearTitleRes = R.string.clear_song_cache,
+        clearMessageRes = R.string.clear_song_cache_dialog,
+    ),
+    PARTIAL_SONG_CACHE(
+        clearTitleRes = R.string.clear_partial_song_cache,
+        clearMessageRes = R.string.clear_partial_song_cache_dialog,
+    ),
+    IMAGE_CACHE(
+        clearTitleRes = R.string.clear_image_cache,
+        clearMessageRes = R.string.clear_image_cache_dialog,
+    ),
+    CANVAS_CACHE(
+        clearTitleRes = R.string.clear_canvas_cache,
+        clearMessageRes = R.string.clear_canvas_cache_dialog,
+    ),
+}
+
 private enum class StorageCategory(
     @StringRes val titleRes: Int,
     @StringRes val bodyRes: Int,
     @DrawableRes val iconRes: Int,
-    @StringRes val clearTitleRes: Int,
-    @StringRes val clearMessageRes: Int,
+    val clearAction: StorageClearAction,
     val limitTarget: StorageLimitTarget?,
 ) {
     DOWNLOADS(
         titleRes = R.string.downloaded_songs,
         bodyRes = R.string.storage_category_downloads_body,
         iconRes = R.drawable.ic_download,
-        clearTitleRes = R.string.clear_all_downloads,
-        clearMessageRes = R.string.clear_downloads_dialog,
+        clearAction = StorageClearAction.DOWNLOADS,
         limitTarget = null,
     ),
     SONG_CACHE(
         titleRes = R.string.song_cache,
         bodyRes = R.string.storage_category_song_cache_body,
         iconRes = R.drawable.ic_music,
-        clearTitleRes = R.string.clear_song_cache,
-        clearMessageRes = R.string.clear_song_cache_dialog,
+        clearAction = StorageClearAction.SONG_CACHE,
         limitTarget = StorageLimitTarget.SONG_CACHE,
     ),
     IMAGE_CACHE(
         titleRes = R.string.image_cache,
         bodyRes = R.string.storage_category_image_cache_body,
         iconRes = R.drawable.image,
-        clearTitleRes = R.string.clear_image_cache,
-        clearMessageRes = R.string.clear_image_cache_dialog,
+        clearAction = StorageClearAction.IMAGE_CACHE,
         limitTarget = StorageLimitTarget.IMAGE_CACHE,
     ),
     CANVAS_CACHE(
         titleRes = R.string.canvas_cache,
         bodyRes = R.string.storage_category_canvas_body,
         iconRes = R.drawable.slow_motion_video,
-        clearTitleRes = R.string.clear_canvas_cache,
-        clearMessageRes = R.string.clear_canvas_cache_dialog,
+        clearAction = StorageClearAction.CANVAS_CACHE,
         limitTarget = null,
     ),
 }
@@ -239,7 +260,7 @@ fun StorageSettings(
             key = MaxSongCacheSizeKey,
             defaultValue = 1024,
         )
-    var pendingClear by rememberSaveable { mutableStateOf<StorageCategory?>(null) }
+    var pendingClear by rememberSaveable { mutableStateOf<StorageClearAction?>(null) }
     var limitTarget by rememberSaveable { mutableStateOf<StorageLimitTarget?>(null) }
     var entrancePlayed by rememberSaveable { mutableStateOf(false) }
     val entrance = remember { Animatable(if (entrancePlayed) 1f else 0f) }
@@ -392,7 +413,19 @@ fun StorageSettings(
                             category.limitTarget?.let { target ->
                                 { limitTarget = target }
                             },
-                        onClear = { pendingClear = category },
+                        onClear = { pendingClear = category.clearAction },
+                        completedSongCacheBytes =
+                            if (category == StorageCategory.SONG_CACHE) usage?.completedSongCacheBytes else null,
+                        partialSongCacheBytes =
+                            if (category == StorageCategory.SONG_CACHE) usage?.partialSongCacheBytes else null,
+                        clearablePartialSongCacheBytes =
+                            if (category == StorageCategory.SONG_CACHE) usage?.clearablePartialSongCacheBytes else null,
+                        onClearPartial =
+                            if (category == StorageCategory.SONG_CACHE) {
+                                { pendingClear = StorageClearAction.PARTIAL_SONG_CACHE }
+                            } else {
+                                null
+                            },
                         modifier = Modifier.storageEntrance(entranceProgress, index = 3 + index),
                     )
                 }
@@ -416,18 +449,27 @@ fun StorageSettings(
         }
     }
 
-    pendingClear?.let { category ->
+    pendingClear?.let { action ->
+        val sizeBytes =
+            when (action) {
+                StorageClearAction.DOWNLOADS -> usage?.bytesFor(StorageCategory.DOWNLOADS)
+                StorageClearAction.SONG_CACHE -> usage?.bytesFor(StorageCategory.SONG_CACHE)
+                StorageClearAction.PARTIAL_SONG_CACHE -> usage?.clearablePartialSongCacheBytes
+                StorageClearAction.IMAGE_CACHE -> usage?.bytesFor(StorageCategory.IMAGE_CACHE)
+                StorageClearAction.CANVAS_CACHE -> usage?.bytesFor(StorageCategory.CANVAS_CACHE)
+            }
         StorageClearConfirmDialog(
-            category = category,
-            sizeBytes = usage?.bytesFor(category),
+            action = action,
+            sizeBytes = sizeBytes,
             onDismiss = { pendingClear = null },
             onConfirm = {
                 pendingClear = null
-                when (category) {
-                    StorageCategory.DOWNLOADS -> viewModel.clearDownloads()
-                    StorageCategory.SONG_CACHE -> viewModel.clearSongCache()
-                    StorageCategory.IMAGE_CACHE -> viewModel.clearImageCache()
-                    StorageCategory.CANVAS_CACHE -> viewModel.clearCanvasCache()
+                when (action) {
+                    StorageClearAction.DOWNLOADS -> viewModel.clearDownloads()
+                    StorageClearAction.SONG_CACHE -> viewModel.clearSongCache()
+                    StorageClearAction.PARTIAL_SONG_CACHE -> viewModel.clearPartialSongCache()
+                    StorageClearAction.IMAGE_CACHE -> viewModel.clearImageCache()
+                    StorageClearAction.CANVAS_CACHE -> viewModel.clearCanvasCache()
                 }
             },
         )
@@ -836,6 +878,10 @@ private fun StorageCategoryCard(
     onLimitClick: (() -> Unit)?,
     onClear: () -> Unit,
     modifier: Modifier = Modifier,
+    completedSongCacheBytes: Long? = null,
+    partialSongCacheBytes: Long? = null,
+    clearablePartialSongCacheBytes: Long? = null,
+    onClearPartial: (() -> Unit)? = null,
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val colors = category.colors()
@@ -933,6 +979,51 @@ private fun StorageCategoryCard(
                     style = MaterialTheme.typography.labelLarge,
                     color = colorScheme.onSurfaceVariant,
                 )
+            }
+
+            if (
+                category == StorageCategory.SONG_CACHE &&
+                completedSongCacheBytes != null &&
+                partialSongCacheBytes != null &&
+                (completedSongCacheBytes > 0L || partialSongCacheBytes > 0L) &&
+                onClearPartial != null
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = colorScheme.surfaceContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    ) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.storage_song_cache_complete, formatFileSize(completedSongCacheBytes)),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = stringResource(R.string.storage_song_cache_partial, formatFileSize(partialSongCacheBytes)),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (partialSongCacheBytes > 0L) colors.accent else colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(
+                            onClick = onClearPartial,
+                            enabled = (clearablePartialSongCacheBytes ?: 0L) > 0L,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.storage_clear_partial_song_cache),
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
             }
 
             Row(
@@ -1065,7 +1156,7 @@ private fun SmartTrimmerCard(
 
 @Composable
 private fun StorageClearConfirmDialog(
-    category: StorageCategory,
+    action: StorageClearAction,
     sizeBytes: Long?,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
@@ -1079,10 +1170,10 @@ private fun StorageClearConfirmDialog(
                 contentDescription = null,
             )
         },
-        title = { Text(stringResource(category.clearTitleRes)) },
+        title = { Text(stringResource(action.clearTitleRes)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(stringResource(category.clearMessageRes).trim())
+                Text(stringResource(action.clearMessageRes).trim())
                 if (sizeBytes != null && sizeBytes > 0L) {
                     Surface(
                         shape = RoundedCornerShape(16.dp),
@@ -1441,6 +1532,7 @@ private fun StorageCacheClearProgressDialog(cacheClear: StorageCacheClearUiModel
         title =
             when (cacheClear.kind) {
                 StorageCacheClearUiKind.SONGS -> stringResource(R.string.storage_clear_song_cache_title)
+                StorageCacheClearUiKind.PARTIAL_SONGS -> stringResource(R.string.storage_clear_partial_song_cache_title)
                 StorageCacheClearUiKind.DOWNLOADS -> stringResource(R.string.storage_clear_downloads_title)
                 StorageCacheClearUiKind.IMAGES -> stringResource(R.string.storage_clear_image_cache_title)
                 StorageCacheClearUiKind.CANVAS -> stringResource(R.string.storage_clear_canvas_cache_title)
