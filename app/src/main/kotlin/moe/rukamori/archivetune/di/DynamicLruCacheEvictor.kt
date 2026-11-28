@@ -12,6 +12,10 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheEvictor
 import androidx.media3.datasource.cache.CacheSpan
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import java.util.TreeSet
 
 const val UNLIMITED_PLAYER_CACHE_BYTES = -1L
@@ -40,8 +44,17 @@ class DynamicLruCacheEvictor(
     var protectedKey: String? = null
         private set
 
+    private val _protectedKeyChanges =
+        MutableSharedFlow<Unit>(
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+    val protectedKeyChanges: SharedFlow<Unit> = _protectedKeyChanges.asSharedFlow()
+
     fun setProtectedKey(key: String?) {
+        if (protectedKey == key) return
         protectedKey = key
+        _protectedKeyChanges.tryEmit(Unit)
     }
 
     fun updateMaxBytes(newMaxBytes: Long) {

@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.rukamori.archivetune.ImageCacheInvalidationSignal
@@ -46,6 +47,7 @@ import moe.rukamori.archivetune.constants.StorageFolderPathKey
 import moe.rukamori.archivetune.constants.StorageFolderTreeUriKey
 import moe.rukamori.archivetune.di.CacheInvalidationSignal
 import moe.rukamori.archivetune.di.DownloadCache
+import moe.rukamori.archivetune.di.DynamicLruCacheEvictor
 import moe.rukamori.archivetune.di.PlayerCache
 import moe.rukamori.archivetune.downloads.DownloadedArtworkRepository
 import moe.rukamori.archivetune.extensions.directorySizeBytes
@@ -106,6 +108,9 @@ data class StorageUsage(
     val songCacheBytes: Long,
     val imageCacheBytes: Long,
     val canvasCacheBytes: Long,
+    val completedSongCacheBytes: Long = 0L,
+    val partialSongCacheBytes: Long = 0L,
+    val clearablePartialSongCacheBytes: Long = 0L,
 )
 
 enum class StorageLocationKind {
@@ -142,6 +147,7 @@ sealed interface StorageFolderUpdateResult {
 
 enum class StorageCacheKind {
     SONGS,
+    PARTIAL_SONGS,
     DOWNLOADS,
     IMAGES,
     CANVAS,
@@ -213,6 +219,7 @@ class StorageLocationRepository
         @ApplicationContext private val context: Context,
         @PlayerCache private val playerCache: Cache,
         @DownloadCache private val downloadCache: Cache,
+        private val playerCacheEvictor: DynamicLruCacheEvictor,
         private val downloadUtil: DownloadUtil,
         private val downloadedArtworkRepository: DownloadedArtworkRepository,
         private val cacheInvalidationSignal: CacheInvalidationSignal,
@@ -231,7 +238,7 @@ class StorageLocationRepository
 
         val usage: Flow<StorageUsage> =
             observeStorageUsageRefreshTriggers(
-                mediaCacheInvalidations = cacheInvalidationSignal.invalidations,
+                mediaCacheInvalidations = merge(cacheInvalidationSignal.invalidations, playerCacheEvictor.protectedKeyChanges),
                 canvasCacheInvalidations = CanvasArtworkPlaybackCache.invalidations,
                 imageCacheInvalidations = imageCacheInvalidationSignal.invalidations,
                 manualRefreshes = manualRefreshSignal,
@@ -240,16 +247,27 @@ class StorageLocationRepository
                 .distinctUntilChanged()
                 .flowOn(Dispatchers.IO)
 
-        private fun measureUsage(): StorageUsage =
-            StorageUsage(
+        private fun measureUsage(): StorageUsage {
+            val songBreakdown = inspectSongCache(playerCache, protectedKey = playerCacheEvictor.protectedKey)
+            val songCacheBytes =
+                if (songBreakdown.totalBytes > 0L) {
+                    songBreakdown.totalBytes
+                } else {
+                    playerCache.measuredSize(StorageFolderKind.SONG_CACHE)
+                }
+            return StorageUsage(
                 downloadsBytes = downloadCache.measuredSize(StorageFolderKind.DOWNLOADS),
-                songCacheBytes = playerCache.measuredSize(StorageFolderKind.SONG_CACHE),
+                songCacheBytes = songCacheBytes,
                 imageCacheBytes =
                     runCatching { context.imageLoader.diskCache?.size }
                         .getOrNull()
                         ?: cacheDirectory(context, StorageFolderKind.IMAGE_CACHE).directorySizeBytes(),
                 canvasCacheBytes = cacheDirectory(context, StorageFolderKind.CANVAS_CACHE).directorySizeBytes(),
+                completedSongCacheBytes = songBreakdown.completeBytes,
+                partialSongCacheBytes = songBreakdown.partialBytes,
+                clearablePartialSongCacheBytes = songBreakdown.clearablePartialBytes,
             )
+        }
 
         private fun Cache.measuredSize(kind: StorageFolderKind): Long {
             val cacheSpace = runCatching { cacheSpace }.getOrDefault(0L)
@@ -266,6 +284,7 @@ class StorageLocationRepository
                     val cleared =
                         when (kind) {
                             StorageCacheKind.SONGS -> clearMediaCache(playerCache, StorageCacheKind.SONGS, onProgress)
+                            StorageCacheKind.PARTIAL_SONGS -> clearPartialSongCache(onProgress)
                             StorageCacheKind.DOWNLOADS -> clearDownloads(onProgress)
                             StorageCacheKind.IMAGES -> clearImageCache(onProgress)
                             StorageCacheKind.CANVAS -> clearCanvasCache(onProgress)
@@ -441,6 +460,26 @@ class StorageLocationRepository
             onProgress: suspend (StorageCacheClearProgress) -> Unit,
         ): Boolean {
             val keys = runCatching { cache.keys.toList() }.getOrElse { return false }
+            return clearMediaCacheKeys(cache, keys, kind, onProgress)
+        }
+
+        private suspend fun clearPartialSongCache(
+            onProgress: suspend (StorageCacheClearProgress) -> Unit,
+        ): Boolean {
+            val partialKeys =
+                inspectSongCache(
+                    playerCache = playerCache,
+                    protectedKey = playerCacheEvictor.protectedKey,
+                ).clearablePartialKeys
+            return clearMediaCacheKeys(playerCache, partialKeys, StorageCacheKind.PARTIAL_SONGS, onProgress)
+        }
+
+        private suspend fun clearMediaCacheKeys(
+            cache: Cache,
+            keys: List<String>,
+            kind: StorageCacheKind,
+            onProgress: suspend (StorageCacheClearProgress) -> Unit,
+        ): Boolean {
             val workUnitsByKey =
                 keys.associateWith { key ->
                     cache.resourceWorkUnits(key)
