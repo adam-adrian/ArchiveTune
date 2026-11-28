@@ -537,6 +537,16 @@ class ResolveAudioStreamUseCase
             key: CacheKey,
             resolved: ResolvedAudioStream,
         ) {
+            putResolvedStreamForAuth(key, resolved)
+            if (key.pinnedFormatId == null && resolved.formatId > 0) {
+                putResolvedStreamForAuth(key.copy(pinnedFormatId = resolved.formatId), resolved)
+            }
+        }
+
+        private fun putResolvedStreamForAuth(
+            key: CacheKey,
+            resolved: ResolvedAudioStream,
+        ) {
             cache[key] = resolved
             cache[
                 key.copy(

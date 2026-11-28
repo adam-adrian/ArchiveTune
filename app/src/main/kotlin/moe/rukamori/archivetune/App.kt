@@ -70,12 +70,12 @@ import moe.rukamori.archivetune.utils.putAccountSessionIndex
 import moe.rukamori.archivetune.utils.reportException
 import moe.rukamori.archivetune.utils.toPlaybackAuthState
 import okhttp3.Dns
+import okio.Path.Companion.toOkioPath
 import timber.log.Timber
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.net.Proxy
 import java.util.*
-import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import kotlin.system.exitProcess
 
@@ -104,10 +104,14 @@ class App :
     @Inject
     lateinit var restoreLauncherEntry: RestoreLauncherEntryUseCase
 
+    @Inject
+    lateinit var imageCacheInvalidationSignal: ImageCacheInvalidationSignal
+
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     @Volatile private var isInitialized = false
-    private val didRunImageCacheTrim = AtomicBoolean(false)
+
+    @Volatile private var imageDiskCache: LazyToggleableImageDiskCache? = null
 
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
@@ -403,60 +407,57 @@ class App :
                     serviceConfig.apply(sessionKey)
                 }
         }
+        applicationScope.launch(Dispatchers.IO) {
+            dataStore.data
+                .map { prefs -> prefs[MaxImageCacheSizeKey] }
+                .distinctUntilChanged()
+                .collect { maxImageCacheSizeMb ->
+                    imageDiskCache?.updateLimitMegabytes(maxImageCacheSizeMb)
+                }
+        }
     }
 
     override fun newImageLoader(context: PlatformContext): ImageLoader {
         val smartTrimmer = dataStore[SmartTrimmerKey] ?: false
         val imageCacheConfig = resolveImageDiskCacheConfig(dataStore[MaxImageCacheSizeKey])
+        val cacheDir = StorageLocationRepository.cacheDirectory(this, StorageFolderKind.IMAGE_CACHE)
 
         val diskCache =
-            DiskCache
-                .Builder()
-                .directory(StorageLocationRepository.cacheDirectory(this, StorageFolderKind.IMAGE_CACHE))
-                .maxSizeBytes(imageCacheConfig.maxSizeBytes)
-                .build()
-
-        if (smartTrimmer && imageCacheConfig.policy == CachePolicy.ENABLED && didRunImageCacheTrim.compareAndSet(false, true)) {
-            applicationScope.launch(Dispatchers.IO) { trimImageDiskCache(diskCache) }
-        }
+            LazyToggleableImageDiskCache(
+                directory = cacheDir.toOkioPath(),
+                initialConfig = imageCacheConfig,
+                trimOnFirstInit = smartTrimmer,
+                createDelegate = { maxSizeBytes ->
+                    DiskCache
+                        .Builder()
+                        .directory(cacheDir)
+                        .maxSizeBytes(maxSizeBytes)
+                        .build()
+                },
+                clearUnopenedDirectory = {
+                    cacheDir.listFiles()?.forEach { child ->
+                        runCatching { child.deleteRecursively() }
+                    }
+                },
+                onCacheChanged = {
+                    if (::imageCacheInvalidationSignal.isInitialized) {
+                        imageCacheInvalidationSignal.notifyChanged()
+                    }
+                },
+            )
+        imageDiskCache = diskCache
 
         return ImageLoader
             .Builder(this)
             .crossfade(true)
             .allowHardware(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
             .diskCache(diskCache)
-            .diskCachePolicy(imageCacheConfig.policy)
+            .diskCachePolicy(CachePolicy.ENABLED)
             .components {
                 add(playlistCoverInterceptor)
                 add(downloadedArtworkRepository.coilMapper())
             }
             .build()
-    }
-
-    private fun trimImageDiskCache(diskCache: DiskCache) {
-        try {
-            val limitBytes = diskCache.maxSize
-            if (limitBytes <= 0L || limitBytes == Long.MAX_VALUE) return
-
-            val dir = java.io.File(diskCache.directory.toString())
-            if (!dir.exists()) return
-
-            val files =
-                dir
-                    .walkTopDown()
-                    .filter { it.isFile }
-                    .sortedBy { it.lastModified() }
-                    .toList()
-            var currentSize = files.sumOf { it.length() }
-            if (currentSize <= limitBytes) return
-
-            for (file in files) {
-                if (currentSize <= limitBytes) break
-                val size = file.length()
-                if (runCatching { file.delete() }.getOrDefault(false)) currentSize -= size
-            }
-        } catch (_: Exception) {
-        }
     }
 
     companion object {
@@ -479,18 +480,4 @@ class App :
             }
         }
     }
-}
-
-internal data class ImageDiskCacheConfig(
-    val policy: CachePolicy,
-    val maxSizeBytes: Long,
-)
-
-internal fun resolveImageDiskCacheConfig(maxImageCacheSizeMb: Int?): ImageDiskCacheConfig {
-    val sizeMb = maxImageCacheSizeMb ?: 512
-    if (sizeMb == 0) return ImageDiskCacheConfig(policy = CachePolicy.DISABLED, maxSizeBytes = 1L)
-    if (sizeMb < 0) return ImageDiskCacheConfig(policy = CachePolicy.ENABLED, maxSizeBytes = Long.MAX_VALUE)
-    val bytesPerMb = 1024L * 1024L
-    val safeSizeMb = sizeMb.toLong().coerceAtMost(Long.MAX_VALUE / bytesPerMb)
-    return ImageDiskCacheConfig(policy = CachePolicy.ENABLED, maxSizeBytes = safeSizeMb * bytesPerMb)
 }
