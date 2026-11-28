@@ -17,9 +17,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -69,6 +73,17 @@ object CanvasArtworkPlaybackCache {
 
     private val persistScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var persistJob: Job? = null
+
+    private val _invalidations =
+        MutableSharedFlow<Unit>(
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+    val invalidations: SharedFlow<Unit> = _invalidations.asSharedFlow()
+
+    private fun notifyCacheChanged() {
+        _invalidations.tryEmit(Unit)
+    }
 
     private val json =
         Json {
@@ -336,6 +351,7 @@ object CanvasArtworkPlaybackCache {
         clearFilesLocked()
         map.clear()
         schedulePersist()
+        notifyCacheChanged()
     }
 
     @Synchronized
@@ -348,6 +364,8 @@ object CanvasArtworkPlaybackCache {
     } catch (error: Exception) {
         Timber.e(error, "Failed to clear canvas cache")
         false
+    } finally {
+        notifyCacheChanged()
     }
 
     @Synchronized
@@ -369,6 +387,7 @@ object CanvasArtworkPlaybackCache {
             }
         }
         schedulePersist()
+        notifyCacheChanged()
     }
 
     @Synchronized
@@ -380,12 +399,14 @@ object CanvasArtworkPlaybackCache {
             clearFilesLocked()
             map.clear()
             schedulePersist()
+            notifyCacheChanged()
             return
         }
         if (directory != null) {
             trimLocked(directory)
         }
         schedulePersist()
+        notifyCacheChanged()
     }
 
     @Synchronized
@@ -401,6 +422,7 @@ object CanvasArtworkPlaybackCache {
                 .filter { entry -> entry.mediaId.isNotBlank() }
                 .forEach { entry -> map[entry.mediaId] = entry }
             cacheDirectory?.let(::trimLocked)
+            notifyCacheChanged()
             Timber.d("Canvas cache restored: ${map.size} entries from disk")
         } catch (error: Exception) {
             Timber.e(error, "Failed to restore canvas cache from disk")
@@ -455,6 +477,7 @@ object CanvasArtworkPlaybackCache {
             entry.verticalFileName?.let { pendingFiles.remove(it) }
             trimLocked(directory)
             schedulePersist()
+            notifyCacheChanged()
         }
     }
 
