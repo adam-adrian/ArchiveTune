@@ -88,6 +88,9 @@ data class StorageUsageUiModel(
     val songCacheBytes: Long,
     val imageCacheBytes: Long,
     val canvasCacheBytes: Long,
+    val completedSongCacheBytes: Long = 0L,
+    val partialSongCacheBytes: Long = 0L,
+    val clearablePartialSongCacheBytes: Long = 0L,
 ) {
     val totalBytes: Long get() = downloadsBytes + songCacheBytes + imageCacheBytes + canvasCacheBytes
 }
@@ -142,6 +145,7 @@ data class StorageCacheClearUiModel(
 
 enum class StorageCacheClearUiKind {
     SONGS,
+    PARTIAL_SONGS,
     DOWNLOADS,
     IMAGES,
     CANVAS,
@@ -264,6 +268,10 @@ class StorageSettingsViewModel
             clearCache(StorageCacheKind.SONGS, showFeedback)
         }
 
+        fun clearPartialSongCache() {
+            clearCache(StorageCacheKind.PARTIAL_SONGS, showFeedback = true)
+        }
+
         fun clearDownloads(showFeedback: Boolean = true) {
             clearCache(StorageCacheKind.DOWNLOADS, showFeedback)
         }
@@ -311,6 +319,13 @@ class StorageSettingsViewModel
             showFeedback: Boolean,
         ) {
             synchronized(activeCacheClearKinds) {
+                val isSongCacheClear = kind == StorageCacheKind.SONGS || kind == StorageCacheKind.PARTIAL_SONGS
+                if (
+                    isSongCacheClear &&
+                    (StorageCacheKind.SONGS in activeCacheClearKinds || StorageCacheKind.PARTIAL_SONGS in activeCacheClearKinds)
+                ) {
+                    return
+                }
                 if (!activeCacheClearKinds.add(kind)) return
             }
             viewModelScope.launch(Dispatchers.IO) {
@@ -385,6 +400,9 @@ class StorageSettingsViewModel
                 songCacheBytes = songCacheBytes.coerceAtLeast(0L),
                 imageCacheBytes = imageCacheBytes.coerceAtLeast(0L),
                 canvasCacheBytes = canvasCacheBytes.coerceAtLeast(0L),
+                completedSongCacheBytes = completedSongCacheBytes.coerceAtLeast(0L),
+                partialSongCacheBytes = partialSongCacheBytes.coerceAtLeast(0L),
+                clearablePartialSongCacheBytes = clearablePartialSongCacheBytes.coerceAtLeast(0L),
             )
 
         private fun StorageMigrationProgress.toUiModel(): StorageMigrationUiModel =
@@ -406,6 +424,7 @@ class StorageSettingsViewModel
         private fun StorageCacheKind.toUiKind(): StorageCacheClearUiKind =
             when (this) {
                 StorageCacheKind.SONGS -> StorageCacheClearUiKind.SONGS
+                StorageCacheKind.PARTIAL_SONGS -> StorageCacheClearUiKind.PARTIAL_SONGS
                 StorageCacheKind.DOWNLOADS -> StorageCacheClearUiKind.DOWNLOADS
                 StorageCacheKind.IMAGES -> StorageCacheClearUiKind.IMAGES
                 StorageCacheKind.CANVAS -> StorageCacheClearUiKind.CANVAS

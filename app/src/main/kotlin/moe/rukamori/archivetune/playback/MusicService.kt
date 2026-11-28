@@ -220,7 +220,9 @@ import moe.rukamori.archivetune.db.entities.Song
 import moe.rukamori.archivetune.db.entities.SongEntity
 import moe.rukamori.archivetune.db.entities.needsRemoteFetch
 import moe.rukamori.archivetune.di.DownloadCache
+import moe.rukamori.archivetune.di.DynamicLruCacheEvictor
 import moe.rukamori.archivetune.di.PlayerCache
+import moe.rukamori.archivetune.di.trimCacheToBytes
 import moe.rukamori.archivetune.extensions.SilentHandler
 import moe.rukamori.archivetune.extensions.collect
 import moe.rukamori.archivetune.extensions.collectLatest
@@ -496,6 +498,10 @@ class MusicService :
     )
     private val remotePlaybackTrackingUrlCache = ConcurrentHashMap<String, String>()
     private val cacheBypassMediaIds = ConcurrentHashMap.newKeySet<String>()
+
+    @Volatile
+    private var maxSongCacheSizeMb: Int = DEFAULT_MAX_SONG_CACHE_SIZE_MB
+    private val songRecoveryGate = PlaybackSongRecoveryGate()
     private val castMimeTypeCache = LruCache<String, String>(128)
     private val mediaOkHttpClient: OkHttpClient by lazy {
         OkHttpClient
@@ -833,6 +839,9 @@ class MusicService :
     @Inject
     @PlayerCache
     lateinit var playerCache: Cache
+
+    @Inject
+    lateinit var playerCacheEvictor: DynamicLruCacheEvictor
 
     @Inject
     @DownloadCache
@@ -1270,6 +1279,10 @@ class MusicService :
             driver = dataStore[UsbBitPerfectDriverKey].toEnum(UsbBitPerfectDriver.ANDROID),
             allowFixedVolume = dataStore.get(UsbBitPerfectFixedVolumeKey, false),
         )
+        maxSongCacheSizeMb = dataStore.get(MaxSongCacheSizeKey, DEFAULT_MAX_SONG_CACHE_SIZE_MB)
+        if (::playerCacheEvictor.isInitialized) {
+            playerCacheEvictor.updateMaxSizeMegabytes(maxSongCacheSizeMb)
+        }
         localPlaybackPlayer =
             SwappableLocalPlayer(
                 buildLocalExoPlayer().apply {
@@ -1719,8 +1732,18 @@ class MusicService :
             }
 
         dataStore.data
+            .map { prefs -> prefs[MaxSongCacheSizeKey] ?: DEFAULT_MAX_SONG_CACHE_SIZE_MB }
+            .distinctUntilChanged()
+            .collect(ioScope) { sizeMb ->
+                maxSongCacheSizeMb = sizeMb
+                if (::playerCacheEvictor.isInitialized) {
+                    playerCacheEvictor.updateMaxSizeMegabytes(sizeMb)
+                }
+            }
+
+        dataStore.data
             .map { prefs ->
-                (prefs[SmartTrimmerKey] ?: false) to (prefs[MaxSongCacheSizeKey] ?: 1024)
+                (prefs[SmartTrimmerKey] ?: false) to (prefs[MaxSongCacheSizeKey] ?: DEFAULT_MAX_SONG_CACHE_SIZE_MB)
             }.debounce(300)
             .distinctUntilChanged()
             .collectLatest(ioScope) { (enabled, maxSongCacheSizeMb) ->
@@ -3980,15 +4003,44 @@ class MusicService :
                 }
             }
 
-    private suspend fun recoverSong(
+    private data class SongRecoveryOutcome(
+        val succeeded: Boolean,
+        val hasResolvedDuration: Boolean,
+    )
+
+    private fun launchRecoverSong(
         mediaId: String,
         playbackData: YTPlayerUtils.PlaybackData? = null,
     ) {
+        if (!songRecoveryGate.tryAcquire(mediaId, hasPlaybackData = playbackData != null)) {
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            var succeeded = false
+            var hasResolvedDuration = false
+            try {
+                val outcome = recoverSong(mediaId, playbackData)
+                succeeded = outcome.succeeded
+                hasResolvedDuration = outcome.hasResolvedDuration
+            } finally {
+                songRecoveryGate.finish(
+                    mediaId = mediaId,
+                    succeeded = succeeded,
+                    hasResolvedDuration = hasResolvedDuration,
+                )
+            }
+        }
+    }
+
+    private suspend fun recoverSong(
+        mediaId: String,
+        playbackData: YTPlayerUtils.PlaybackData? = null,
+    ): SongRecoveryOutcome {
         val song = database.song(mediaId).first()
         val mediaMetadata =
             withContext(Dispatchers.Main) {
                 player.findNextMediaItemById(mediaId)?.metadata
-            } ?: return
+            } ?: return SongRecoveryOutcome(succeeded = false, hasResolvedDuration = false)
         val duration =
             song?.song?.duration?.takeIf { it != -1 }
                 ?: mediaMetadata.duration.takeIf { it != -1 }
@@ -4006,12 +4058,23 @@ class MusicService :
                 update(song.song.copy(duration = duration))
             }
         }
-        if (mediaMetadata.isPodcast) return
+        val hasResolvedDuration = duration > 0
+        if (mediaMetadata.isPodcast) {
+            return SongRecoveryOutcome(succeeded = true, hasResolvedDuration = hasResolvedDuration)
+        }
         if (!database.hasRelatedSongs(mediaId)) {
             val relatedEndpoint =
                 YouTube.next(WatchEndpoint(videoId = mediaId)).getOrNull()?.relatedEndpoint
-                    ?: return
-            val relatedPage = YouTube.related(relatedEndpoint).getOrNull() ?: return
+                    ?: return SongRecoveryOutcome(
+                        succeeded = false,
+                        hasResolvedDuration = hasResolvedDuration,
+                    )
+            val relatedPage =
+                YouTube.related(relatedEndpoint).getOrNull()
+                    ?: return SongRecoveryOutcome(
+                        succeeded = false,
+                        hasResolvedDuration = hasResolvedDuration,
+                    )
             database.query {
                 relatedPage.songs
                     .map(SongItem::toMediaMetadata)
@@ -4024,6 +4087,7 @@ class MusicService :
                     }.forEach(::insert)
             }
         }
+        return SongRecoveryOutcome(succeeded = true, hasResolvedDuration = hasResolvedDuration)
     }
 
     fun playQueue(
@@ -4706,6 +4770,12 @@ class MusicService :
         player.playWhenReady = false
         player.stop()
         player.clearMediaItems()
+        if (::moduleDownloadUtil.isInitialized) {
+            moduleDownloadUtil.setActivePlaybackMediaId(null)
+        }
+        if (::playerCacheEvictor.isInitialized) {
+            playerCacheEvictor.setProtectedKey(null)
+        }
         abandonAudioFocus()
         closeAudioEffectSession()
         consecutivePlaybackErr = 0
@@ -7111,6 +7181,7 @@ class MusicService :
 
         val timelineEmpty = player.currentTimeline.isEmpty || player.mediaItemCount == 0 || player.currentMediaItem == null
         currentMediaMetadata.value = if (timelineEmpty) null else (mediaItem?.metadata ?: player.currentMetadata)
+        syncActivePlaybackMediaIdWithDownloads()
 
         widgetUpdater.update()
 
@@ -7196,10 +7267,34 @@ class MusicService :
         return downloadCache.getCachedSpans(selection.cacheKey).sumOf { span -> span.length.coerceAtLeast(0L) }
     }
 
+    private fun syncActivePlaybackMediaIdWithDownloads() {
+        if (!::player.isInitialized) return
+        val activeMediaId =
+            if (
+                player.playbackState == Player.STATE_IDLE ||
+                player.playbackState == Player.STATE_ENDED ||
+                player.mediaItemCount == 0
+            ) {
+                null
+            } else {
+                val currentItem = player.currentMediaItem
+                currentItem?.localConfiguration?.customCacheKey
+                    ?: currentItem?.mediaId
+                    ?: currentMediaMetadata.value?.id
+            }
+        if (::moduleDownloadUtil.isInitialized) {
+            moduleDownloadUtil.setActivePlaybackMediaId(activeMediaId)
+        }
+        if (::playerCacheEvictor.isInitialized) {
+            playerCacheEvictor.setProtectedKey(activeMediaId)
+        }
+    }
+
     override fun onPlaybackStateChanged(
         @Player.State playbackState: Int,
     ) {
         super.onPlaybackStateChanged(playbackState)
+        syncActivePlaybackMediaIdWithDownloads()
 
         updateHistoryTrackingPlaybackState()
         if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
@@ -7564,6 +7659,15 @@ class MusicService :
                     saveQueueToDisk()
                 }
             }
+        }
+        if (events.containsAny(
+                Player.EVENT_MEDIA_ITEM_TRANSITION,
+                Player.EVENT_PLAYBACK_STATE_CHANGED,
+                Player.EVENT_TIMELINE_CHANGED,
+                Player.EVENT_POSITION_DISCONTINUITY,
+            )
+        ) {
+            syncActivePlaybackMediaIdWithDownloads()
         }
     }
 
@@ -7957,36 +8061,12 @@ class MusicService :
 
         withContext(Dispatchers.IO) {
             val cacheDir = StorageLocationRepository.cacheDirectory(this@MusicService, StorageFolderKind.SONG_CACHE)
-            val currentSpace = runCatching { playerCache.cacheSpace }.getOrNull() ?: 0L
-            var totalBytes = if (currentSpace > 0L) currentSpace else cacheDir.directorySizeBytes()
-            if (totalBytes <= limitBytes) return@withContext
-
-            data class Candidate(
-                val key: String,
-                val lastTouchTimestamp: Long,
-                val sizeBytes: Long,
+            trimCacheToBytes(
+                cache = playerCache,
+                limitBytes = limitBytes,
+                protectedKey = if (::playerCacheEvictor.isInitialized) playerCacheEvictor.protectedKey else null,
+                fallbackTotalBytes = { cacheDir.directorySizeBytes() },
             )
-
-            val candidates =
-                runCatching {
-                    playerCache.keys
-                        .mapNotNull { key ->
-                            runCatching {
-                                val spans = playerCache.getCachedSpans(key)
-                                if (spans.isEmpty()) return@runCatching null
-                                val oldestTouch = spans.minOf { it.lastTouchTimestamp }
-                                val sizeBytes = spans.sumOf { it.length }
-                                Candidate(key = key, lastTouchTimestamp = oldestTouch, sizeBytes = sizeBytes)
-                            }.getOrNull()
-                        }.sortedBy { it.lastTouchTimestamp }
-                }.getOrNull().orEmpty()
-
-            for (candidate in candidates) {
-                if (totalBytes <= limitBytes) break
-                val removedSize = candidate.sizeBytes.coerceAtLeast(0L)
-                runCatching { playerCache.removeResource(candidate.key) }
-                totalBytes -= removedSize
-            }
         }
     }
 
@@ -8008,7 +8088,11 @@ class MusicService :
                 .setCacheWriteDataSinkFactory(null)
         val streamingFactory = DataSource.Factory {
             createPlayerCacheDataSourceFactory(
-                cacheWriteEnabled = !isLowDataModeActive(),
+                cacheWriteEnabled =
+                    shouldWriteToPlayerCache(
+                        lowDataModeActive = isLowDataModeActive(),
+                        maxSongCacheSizeMb = maxSongCacheSizeMb,
+                    ),
             ).createDataSource()
         }
         val directFactory = createResolvedUpstreamDataSourceFactory()
@@ -8019,15 +8103,17 @@ class MusicService :
                 when {
                     dataSpec.uri.shouldBypassPlayerCache() || (mediaId != null && mediaId in cacheBypassMediaIds) -> directFactory
                     else -> {
+                        val isDownloaded = mediaId != null && downloadCache.isFullyCached(mediaId)
                         if (mediaId != null) {
-                            database.getFormatByIdBlocking(mediaId)?.let { format ->
-                                format.toCastMimeType()?.let { castMimeTypeCache.put(mediaId, it) }
-                                audioNormalizationFactorCache[mediaId] =
-                                    calculateAudioNormalizationFactor(format, normalizeAudio = true)
+                            if (isDownloaded ||
+                                dataSpec.uri.shouldBypassYouTubeResolver() ||
+                                playerCache.getCachedSpans(mediaId).isNotEmpty()
+                            ) {
+                                warmFormatCachesIfNeeded(mediaId)
                             }
-                            scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
+                            launchRecoverSong(mediaId)
                         }
-                        if (mediaId != null && downloadCache.isFullyCached(mediaId)) {
+                        if (isDownloaded) {
                             downloadedFactory
                         } else {
                             streamingFactory
@@ -8035,6 +8121,17 @@ class MusicService :
                     }
                 }
             }
+        }
+    }
+
+    private fun warmFormatCachesIfNeeded(mediaId: String) {
+        if (castMimeTypeCache.get(mediaId) != null && audioNormalizationFactorCache.containsKey(mediaId)) {
+            return
+        }
+        database.getFormatByIdBlocking(mediaId)?.let { format ->
+            format.toCastMimeType()?.let { castMimeTypeCache.put(mediaId, it) }
+            audioNormalizationFactorCache[mediaId] =
+                calculateAudioNormalizationFactor(format, normalizeAudio = true)
         }
     }
 
@@ -8246,7 +8343,13 @@ class MusicService :
         ) {
             throw Cache.CacheException("Cached audio does not match the resolved stream")
         }
-        if (mediaId !in cacheBypassMediaIds) {
+        if (shouldPersistPlayerCacheMetadata(
+                cacheBypassed = mediaId in cacheBypassMediaIds,
+                lowDataModeActive = lowDataModeActive,
+                maxSongCacheSizeMb = maxSongCacheSizeMb,
+                hasExistingCachedSpans = cachedMetadata != null,
+            )
+        ) {
             val mutations = ContentMetadataMutations()
                 .set(PLAYBACK_FORMAT_ID_METADATA_KEY, format.itag.toLong())
             if (resolvedContentLength > 0L) {
@@ -8293,7 +8396,7 @@ class MusicService :
                 formatEntity,
             )
         }
-        scope.launch(Dispatchers.IO) { recoverSong(mediaId, nonNullPlayback) }
+        launchRecoverSong(mediaId, nonNullPlayback)
 
         val streamUrl = nonNullPlayback.streamUrl
 
@@ -8977,8 +9080,15 @@ class MusicService :
             player.release()
         } catch (_: Exception) {
         }
+        if (::moduleDownloadUtil.isInitialized) {
+            moduleDownloadUtil.setActivePlaybackMediaId(null)
+        }
+        if (::playerCacheEvictor.isInitialized) {
+            playerCacheEvictor.setProtectedKey(null)
+        }
         nextStreamPreloader.cancel()
         scopeJob.cancel()
+        songRecoveryGate.clear()
     }
 
     override fun onBind(intent: Intent?): android.os.IBinder? {
@@ -9223,6 +9333,7 @@ class MusicService :
         private const val DISCORD_HOLD_TIMEOUT_MS = 7_000L
         private const val MAX_OFFICIAL_AUDIO_SOURCES = 256
         private const val OFFICIAL_AUDIO_CURRENT_ITEM_SWAP_WINDOW_MS = 5_000L
+        private const val DEFAULT_MAX_SONG_CACHE_SIZE_MB = 1024
         const val CHANNEL_ID = "music_channel_01"
         const val ACTION_MEDIA_NOTIFICATION_DISMISSED =
             "moe.rukamori.archivetune.action.MEDIA_NOTIFICATION_DISMISSED"
@@ -9234,7 +9345,6 @@ class MusicService :
         private const val TOGETHER_INACTIVITY_NOTIFICATION_ID = 892
         private const val TOGETHER_HOST_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000L
         const val ERROR_CODE_NO_STREAM = 1000001
-        private const val PLAYBACK_FORMAT_ID_METADATA_KEY = "archivetune_playback_format_id"
         const val CHUNK_LENGTH = 8 * 1024 * 1024L
         val RETRYABLE_STREAM_RESPONSE_CODES = setOf(403, 404, 410, 416)
         const val PERSISTENT_QUEUE_FILE = "persistent_queue.data"

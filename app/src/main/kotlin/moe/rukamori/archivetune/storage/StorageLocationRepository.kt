@@ -21,17 +21,21 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import moe.rukamori.archivetune.ImageCacheInvalidationSignal
 import moe.rukamori.archivetune.constants.GitHubContributorsEtagKey
 import moe.rukamori.archivetune.constants.GitHubContributorsJsonKey
 import moe.rukamori.archivetune.constants.GitHubContributorsLastCheckedAtKey
@@ -41,7 +45,9 @@ import moe.rukamori.archivetune.constants.StorageFolderDisplayNameKey
 import moe.rukamori.archivetune.constants.StorageFolderIdKey
 import moe.rukamori.archivetune.constants.StorageFolderPathKey
 import moe.rukamori.archivetune.constants.StorageFolderTreeUriKey
+import moe.rukamori.archivetune.di.CacheInvalidationSignal
 import moe.rukamori.archivetune.di.DownloadCache
+import moe.rukamori.archivetune.di.DynamicLruCacheEvictor
 import moe.rukamori.archivetune.di.PlayerCache
 import moe.rukamori.archivetune.downloads.DownloadedArtworkRepository
 import moe.rukamori.archivetune.extensions.directorySizeBytes
@@ -52,6 +58,7 @@ import moe.rukamori.archivetune.utils.PreferenceStore
 import moe.rukamori.archivetune.utils.dataStore
 import java.io.File
 import javax.inject.Inject
+import javax.inject.Singleton
 
 enum class StorageFolderKind(
     val defaultDirectoryName: String,
@@ -101,6 +108,9 @@ data class StorageUsage(
     val songCacheBytes: Long,
     val imageCacheBytes: Long,
     val canvasCacheBytes: Long,
+    val completedSongCacheBytes: Long = 0L,
+    val partialSongCacheBytes: Long = 0L,
+    val clearablePartialSongCacheBytes: Long = 0L,
 )
 
 enum class StorageLocationKind {
@@ -137,6 +147,7 @@ sealed interface StorageFolderUpdateResult {
 
 enum class StorageCacheKind {
     SONGS,
+    PARTIAL_SONGS,
     DOWNLOADS,
     IMAGES,
     CANVAS,
@@ -201,39 +212,62 @@ class ClearStorageCacheUseCase
         ): StorageCacheClearResult = repository.clearCache(kind, onProgress)
     }
 
+@Singleton
 class StorageLocationRepository
     @Inject
     constructor(
         @ApplicationContext private val context: Context,
         @PlayerCache private val playerCache: Cache,
         @DownloadCache private val downloadCache: Cache,
+        private val playerCacheEvictor: DynamicLruCacheEvictor,
         private val downloadUtil: DownloadUtil,
         private val downloadedArtworkRepository: DownloadedArtworkRepository,
+        private val cacheInvalidationSignal: CacheInvalidationSignal,
+        private val imageCacheInvalidationSignal: ImageCacheInvalidationSignal,
     ) {
+        private val manualRefreshSignal =
+            MutableSharedFlow<Unit>(
+                extraBufferCapacity = 1,
+                onBufferOverflow = BufferOverflow.DROP_OLDEST,
+            )
+
         val selection: Flow<StorageFolderSelection> =
             context.dataStore.data.map { preferences ->
                 preferences.selectionFor(context.storageLocationOptions(preferences))
             }
 
         val usage: Flow<StorageUsage> =
-            flow {
-                while (true) {
-                    emit(measureUsage())
-                    delay(StorageUsageRefreshIntervalMillis)
-                }
-            }.distinctUntilChanged()
+            observeStorageUsageRefreshTriggers(
+                mediaCacheInvalidations = merge(cacheInvalidationSignal.invalidations, playerCacheEvictor.protectedKeyChanges),
+                canvasCacheInvalidations = CanvasArtworkPlaybackCache.invalidations,
+                imageCacheInvalidations = imageCacheInvalidationSignal.invalidations,
+                manualRefreshes = manualRefreshSignal,
+            ).conflate()
+                .map { measureUsage() }
+                .distinctUntilChanged()
                 .flowOn(Dispatchers.IO)
 
-        private fun measureUsage(): StorageUsage =
-            StorageUsage(
+        private fun measureUsage(): StorageUsage {
+            val songBreakdown = inspectSongCache(playerCache, protectedKey = playerCacheEvictor.protectedKey)
+            val songCacheBytes =
+                if (songBreakdown.totalBytes > 0L) {
+                    songBreakdown.totalBytes
+                } else {
+                    playerCache.measuredSize(StorageFolderKind.SONG_CACHE)
+                }
+            return StorageUsage(
                 downloadsBytes = downloadCache.measuredSize(StorageFolderKind.DOWNLOADS),
-                songCacheBytes = playerCache.measuredSize(StorageFolderKind.SONG_CACHE),
+                songCacheBytes = songCacheBytes,
                 imageCacheBytes =
                     runCatching { context.imageLoader.diskCache?.size }
                         .getOrNull()
                         ?: cacheDirectory(context, StorageFolderKind.IMAGE_CACHE).directorySizeBytes(),
                 canvasCacheBytes = cacheDirectory(context, StorageFolderKind.CANVAS_CACHE).directorySizeBytes(),
+                completedSongCacheBytes = songBreakdown.completeBytes,
+                partialSongCacheBytes = songBreakdown.partialBytes,
+                clearablePartialSongCacheBytes = songBreakdown.clearablePartialBytes,
             )
+        }
 
         private fun Cache.measuredSize(kind: StorageFolderKind): Long {
             val cacheSpace = runCatching { cacheSpace }.getOrDefault(0L)
@@ -250,6 +284,7 @@ class StorageLocationRepository
                     val cleared =
                         when (kind) {
                             StorageCacheKind.SONGS -> clearMediaCache(playerCache, StorageCacheKind.SONGS, onProgress)
+                            StorageCacheKind.PARTIAL_SONGS -> clearPartialSongCache(onProgress)
                             StorageCacheKind.DOWNLOADS -> clearDownloads(onProgress)
                             StorageCacheKind.IMAGES -> clearImageCache(onProgress)
                             StorageCacheKind.CANVAS -> clearCanvasCache(onProgress)
@@ -261,6 +296,8 @@ class StorageLocationRepository
                 } catch (throwable: Throwable) {
                     if (throwable is CancellationException) throw throwable
                     StorageCacheClearResult.Failed
+                } finally {
+                    manualRefreshSignal.tryEmit(Unit)
                 }
             }
 
@@ -269,39 +306,43 @@ class StorageLocationRepository
             onProgress: suspend (StorageMigrationProgress) -> Unit,
         ): StorageFolderUpdateResult =
             withContext(Dispatchers.IO) {
-                val preferencesSnapshot = context.dataStore.data.first()
-                val previousUri = preferencesSnapshot[StorageFolderTreeUriKey]
-                val options = context.storageLocationOptions(preferencesSnapshot)
-                val selectedOption =
-                    options.firstOrNull { option -> option.id == optionId }
-                        ?: return@withContext StorageFolderUpdateResult.UnsupportedProvider
-                if (selectedOption.kind == StorageLocationKind.INTERNAL) {
-                    return@withContext resetFolderAndMoveCache(onProgress)
-                }
+                try {
+                    val preferencesSnapshot = context.dataStore.data.first()
+                    val previousUri = preferencesSnapshot[StorageFolderTreeUriKey]
+                    val options = context.storageLocationOptions(preferencesSnapshot)
+                    val selectedOption =
+                        options.firstOrNull { option -> option.id == optionId }
+                            ?: return@withContext StorageFolderUpdateResult.UnsupportedProvider
+                    if (selectedOption.kind == StorageLocationKind.INTERNAL) {
+                        return@withContext resetFolderAndMoveCache(onProgress)
+                    }
 
-                val targetRoot = File(selectedOption.rootPath).canonicalFile
-                if (!targetRoot.ensureStorageRoot()) return@withContext StorageFolderUpdateResult.NotWritable
-                val movedCache =
-                    moveAllCacheDirectories(preferencesSnapshot) { kind ->
-                        targetRoot.resolve(kind.defaultDirectoryName)
-                    }.withProgress(onProgress)
-                if (!movedCache) {
-                    return@withContext StorageFolderUpdateResult.NotWritable
+                    val targetRoot = File(selectedOption.rootPath).canonicalFile
+                    if (!targetRoot.ensureStorageRoot()) return@withContext StorageFolderUpdateResult.NotWritable
+                    val movedCache =
+                        moveAllCacheDirectories(preferencesSnapshot) { kind ->
+                            targetRoot.resolve(kind.defaultDirectoryName)
+                        }.withProgress(onProgress)
+                    if (!movedCache) {
+                        return@withContext StorageFolderUpdateResult.NotWritable
+                    }
+                    context.dataStore.edit { preferences ->
+                        preferences[StorageFolderIdKey] = selectedOption.id
+                        preferences[StorageFolderPathKey] = targetRoot.canonicalPath
+                        preferences[StorageFolderDisplayNameKey] = selectedOption.id
+                        preferences.remove(StorageFolderTreeUriKey)
+                    }
+                    context
+                        .storageLocationPreferences()
+                        .edit()
+                        .putString(StorageRootPathMirrorKey, targetRoot.canonicalPath)
+                        .apply()
+                    releasePersistedPermission(previousUri, replacementUri = null)
+                    StorageRestartScheduler.schedule(context)
+                    StorageFolderUpdateResult.Success
+                } finally {
+                    manualRefreshSignal.tryEmit(Unit)
                 }
-                context.dataStore.edit { preferences ->
-                    preferences[StorageFolderIdKey] = selectedOption.id
-                    preferences[StorageFolderPathKey] = targetRoot.canonicalPath
-                    preferences[StorageFolderDisplayNameKey] = selectedOption.id
-                    preferences.remove(StorageFolderTreeUriKey)
-                }
-                context
-                    .storageLocationPreferences()
-                    .edit()
-                    .putString(StorageRootPathMirrorKey, targetRoot.canonicalPath)
-                    .apply()
-                releasePersistedPermission(previousUri, replacementUri = null)
-                StorageRestartScheduler.schedule(context)
-                StorageFolderUpdateResult.Success
             }
 
         suspend fun resetFolderAndMoveCache(onProgress: suspend (StorageMigrationProgress) -> Unit): StorageFolderUpdateResult =
@@ -419,6 +460,26 @@ class StorageLocationRepository
             onProgress: suspend (StorageCacheClearProgress) -> Unit,
         ): Boolean {
             val keys = runCatching { cache.keys.toList() }.getOrElse { return false }
+            return clearMediaCacheKeys(cache, keys, kind, onProgress)
+        }
+
+        private suspend fun clearPartialSongCache(
+            onProgress: suspend (StorageCacheClearProgress) -> Unit,
+        ): Boolean {
+            val partialKeys =
+                inspectSongCache(
+                    playerCache = playerCache,
+                    protectedKey = playerCacheEvictor.protectedKey,
+                ).clearablePartialKeys
+            return clearMediaCacheKeys(playerCache, partialKeys, StorageCacheKind.PARTIAL_SONGS, onProgress)
+        }
+
+        private suspend fun clearMediaCacheKeys(
+            cache: Cache,
+            keys: List<String>,
+            kind: StorageCacheKind,
+            onProgress: suspend (StorageCacheClearProgress) -> Unit,
+        ): Boolean {
             val workUnitsByKey =
                 keys.associateWith { key ->
                     cache.resourceWorkUnits(key)
@@ -1011,7 +1072,6 @@ private const val InternalStorageOptionId = "internal"
 private const val ExternalStorageOptionIdPrefix = "external:"
 private const val ExternalStorageRootDirectoryName = "ArchiveTune"
 private const val AppRestartDelayMillis = 3_000L
-private const val StorageUsageRefreshIntervalMillis = 1_000L
 private const val StorageCopyBufferSizeBytes = 64 * 1024
 private const val CanvasArtworkCacheFileName = "canvas_artwork_cache.json"
 private const val SavedArtworkCacheFileName = "archivetune_saved_artworks.json"
