@@ -559,8 +559,9 @@
     <string name="storage_smart_trimmer_unavailable">Set a song or image cache limit to use Smart Trimmer.</string>
     <string name="storage_migration_cache_title">Moving cache</string>
     <string name="storage_migration_downloads_title">Moving downloads</string>
-    <string name="storage_song_cache_complete">Complete: %1$s</string>
-    <string name="storage_song_cache_partial">Partial: %1$s</string>
+    <string name="storage_song_cache_complete_label">Complete</string>
+    <string name="storage_song_cache_partial_label">Partial</string>
+    <string name="storage_partial_song_cache_playing_kept">Playing track is kept</string>
     <string name="storage_clear_partial_song_cache">Clear partial</string>
     <string name="storage_clear_song_cache_title">Clearing song cache</string>
     <string name="storage_clear_partial_song_cache_title">Clearing partial song cache</string>

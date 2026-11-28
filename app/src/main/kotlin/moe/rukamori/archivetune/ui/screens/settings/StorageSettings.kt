@@ -57,6 +57,9 @@ import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.DropdownMenuGroup
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenuPopup
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
@@ -67,6 +70,7 @@ import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import moe.rukamori.archivetune.ui.component.BackAwareModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
@@ -75,6 +79,8 @@ import androidx.compose.material3.SheetState
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SplitButtonDefaults
+import androidx.compose.material3.SplitButtonLayout
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -981,49 +987,28 @@ private fun StorageCategoryCard(
                 )
             }
 
-            if (
+            val completeBytes = completedSongCacheBytes ?: 0L
+            val partialBytes = partialSongCacheBytes ?: 0L
+            val showSongCacheBreakdown =
                 category == StorageCategory.SONG_CACHE &&
-                completedSongCacheBytes != null &&
-                partialSongCacheBytes != null &&
-                (completedSongCacheBytes > 0L || partialSongCacheBytes > 0L) &&
-                onClearPartial != null
+                    completedSongCacheBytes != null &&
+                    partialSongCacheBytes != null &&
+                    (completeBytes + partialBytes) > 0L
+
+            AnimatedVisibility(
+                visible = showSongCacheBreakdown,
+                enter =
+                    fadeIn(MaterialTheme.motionScheme.defaultEffectsSpec()) +
+                        expandVertically(MaterialTheme.motionScheme.defaultSpatialSpec()),
+                exit =
+                    fadeOut(MaterialTheme.motionScheme.fastEffectsSpec()) +
+                        shrinkVertically(MaterialTheme.motionScheme.fastSpatialSpec()),
             ) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = colorScheme.surfaceContainer,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    ) {
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text(
-                                text = stringResource(R.string.storage_song_cache_complete, formatFileSize(completedSongCacheBytes)),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colorScheme.onSurfaceVariant,
-                            )
-                            Text(
-                                text = stringResource(R.string.storage_song_cache_partial, formatFileSize(partialSongCacheBytes)),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (partialSongCacheBytes > 0L) colors.accent else colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        TextButton(
-                            onClick = onClearPartial,
-                            enabled = (clearablePartialSongCacheBytes ?: 0L) > 0L,
-                        ) {
-                            Text(
-                                text = stringResource(R.string.storage_clear_partial_song_cache),
-                                maxLines = 1,
-                            )
-                        }
-                    }
-                }
+                SongCacheBreakdownLegend(
+                    completeBytes = completeBytes,
+                    partialBytes = partialBytes,
+                    accentColor = colors.accent,
+                )
             }
 
             Row(
@@ -1051,19 +1036,233 @@ private fun StorageCategoryCard(
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                FilledTonalButton(
+                if (category == StorageCategory.SONG_CACHE && onClearPartial != null) {
+                    SongCacheClearSplitButton(
+                        sizeBytes = sizeBytes,
+                        partialSongCacheBytes = partialSongCacheBytes,
+                        clearablePartialSongCacheBytes = clearablePartialSongCacheBytes,
+                        onClear = onClear,
+                        onClearPartial = onClearPartial,
+                    )
+                } else {
+                    FilledTonalButton(
+                        onClick = onClear,
+                        enabled = sizeBytes != 0L,
+                        shapes = ButtonDefaults.shapes(),
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.delete),
+                            contentDescription = null,
+                            modifier = Modifier.size(ButtonDefaults.IconSize),
+                        )
+                        Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                        Text(stringResource(R.string.clear))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SongCacheBreakdownLegend(
+    completeBytes: Long,
+    partialBytes: Long,
+    accentColor: Color,
+) {
+    val totalBytes = completeBytes + partialBytes
+    val completePercent = if (totalBytes > 0L) ((completeBytes.toDouble() / totalBytes) * 100).toInt() else 0
+    val partialPercent =
+        when {
+            partialBytes <= 0L -> 0
+            completeBytes <= 0L -> 100
+            else -> (100 - completePercent).coerceIn(0, 100)
+        }
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        SongCacheBreakdownLegendItem(
+            label = stringResource(R.string.storage_song_cache_complete_label),
+            bytes = completeBytes,
+            percent = completePercent,
+            dotColor = accentColor,
+            modifier = Modifier.weight(1f),
+        )
+        SongCacheBreakdownLegendItem(
+            label = stringResource(R.string.storage_song_cache_partial_label),
+            bytes = partialBytes,
+            percent = partialPercent,
+            dotColor = accentColor.copy(alpha = 0.45f),
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun SongCacheBreakdownLegendItem(
+    label: String,
+    bytes: Long,
+    percent: Int,
+    dotColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val sizeText = formatFileSize(bytes)
+    val percentText = stringResource(R.string.percentage_format, percent)
+    Row(
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier =
+            modifier.clearAndSetSemantics {
+                contentDescription = "$label, $sizeText, $percentText"
+            },
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .padding(top = 4.dp)
+                    .size(12.dp)
+                    .clip(MaterialShapes.Cookie4Sided.toShape())
+                    .background(dotColor),
+        )
+        Column {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = stringResource(R.string.storage_legend_detail, sizeText, percentText),
+                style = MaterialTheme.typography.bodySmall,
+                color = colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SongCacheClearSplitButton(
+    sizeBytes: Long?,
+    partialSongCacheBytes: Long?,
+    clearablePartialSongCacheBytes: Long?,
+    onClear: () -> Unit,
+    onClearPartial: () -> Unit,
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val clearablePartial = clearablePartialSongCacheBytes ?: 0L
+    val partialBytes = partialSongCacheBytes ?: 0L
+    var clearMenuExpanded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(sizeBytes) {
+        if (sizeBytes == 0L) clearMenuExpanded = false
+    }
+
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (clearMenuExpanded) 180f else 0f,
+        animationSpec = MaterialTheme.motionScheme.fastSpatialSpec(),
+        label = "songCacheClearMenuChevron",
+    )
+
+    Box {
+        SplitButtonLayout(
+            leadingButton = {
+                SplitButtonDefaults.TonalLeadingButton(
                     onClick = onClear,
                     enabled = sizeBytes != 0L,
-                    shapes = ButtonDefaults.shapes(),
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.delete),
                         contentDescription = null,
-                        modifier = Modifier.size(ButtonDefaults.IconSize),
+                        modifier = Modifier.size(SplitButtonDefaults.LeadingIconSize),
                     )
                     Spacer(Modifier.width(ButtonDefaults.IconSpacing))
                     Text(stringResource(R.string.clear))
                 }
+            },
+            trailingButton = {
+                SplitButtonDefaults.TonalTrailingButton(
+                    checked = clearMenuExpanded,
+                    onCheckedChange = { clearMenuExpanded = it },
+                    enabled = sizeBytes != 0L,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.expand_more),
+                        contentDescription = stringResource(R.string.more_options),
+                        modifier =
+                            Modifier
+                                .size(SplitButtonDefaults.TrailingIconSize)
+                                .graphicsLayer { rotationZ = chevronRotation },
+                    )
+                }
+            },
+        )
+
+        DropdownMenuPopup(
+            expanded = clearMenuExpanded,
+            onDismissRequest = { clearMenuExpanded = false },
+        ) {
+            DropdownMenuGroup(shapes = MenuDefaults.groupShape(0, 1)) {
+                DropdownMenuItem(
+                    onClick = {
+                        clearMenuExpanded = false
+                        onClearPartial()
+                    },
+                    text = { Text(stringResource(R.string.storage_clear_partial_song_cache)) },
+                    shape = MenuDefaults.leadingItemShape,
+                    leadingIcon = {
+                        Icon(
+                            painter = painterResource(R.drawable.clear_all),
+                            contentDescription = null,
+                            modifier = Modifier.size(MenuDefaults.LeadingIconSize),
+                        )
+                    },
+                    supportingText =
+                        when {
+                            clearablePartial > 0L -> {
+                                { Text(stringResource(R.string.storage_clear_frees, formatFileSize(clearablePartial))) }
+                            }
+
+                            partialBytes > 0L -> {
+                                { Text(stringResource(R.string.storage_partial_song_cache_playing_kept)) }
+                            }
+
+                            else -> null
+                        },
+                    enabled = clearablePartial > 0L,
+                )
+                DropdownMenuItem(
+                    onClick = {
+                        clearMenuExpanded = false
+                        onClear()
+                    },
+                    text = { Text(stringResource(R.string.clear_song_cache)) },
+                    shape = MenuDefaults.trailingItemShape,
+                    leadingIcon = {
+                        Icon(
+                            painter = painterResource(R.drawable.delete),
+                            contentDescription = null,
+                            modifier = Modifier.size(MenuDefaults.LeadingIconSize),
+                        )
+                    },
+                    supportingText =
+                        if (sizeBytes != null && sizeBytes > 0L) {
+                            { Text(stringResource(R.string.storage_clear_frees, formatFileSize(sizeBytes))) }
+                        } else {
+                            null
+                        },
+                    enabled = sizeBytes != 0L,
+                    colors =
+                        MenuDefaults.itemColors(
+                            textColor = colorScheme.error,
+                            leadingIconColor = colorScheme.error,
+                        ),
+                )
             }
         }
     }
