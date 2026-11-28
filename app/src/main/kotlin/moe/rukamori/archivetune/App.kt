@@ -104,6 +104,9 @@ class App :
     @Inject
     lateinit var restoreLauncherEntry: RestoreLauncherEntryUseCase
 
+    @Inject
+    lateinit var imageCacheInvalidationSignal: ImageCacheInvalidationSignal
+
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     @Volatile private var isInitialized = false
@@ -434,6 +437,11 @@ class App :
                 clearUnopenedDirectory = {
                     cacheDir.listFiles()?.forEach { child ->
                         runCatching { child.deleteRecursively() }
+                    }
+                },
+                onCacheChanged = {
+                    if (::imageCacheInvalidationSignal.isInitialized) {
+                        imageCacheInvalidationSignal.notifyChanged()
                     }
                 },
             )

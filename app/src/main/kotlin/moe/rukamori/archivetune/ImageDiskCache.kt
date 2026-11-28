@@ -9,11 +9,33 @@ package moe.rukamori.archivetune
 
 import coil3.disk.DiskCache
 import coil3.request.CachePolicy
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import okio.FileSystem
 import okio.Path
+import javax.inject.Inject
+import javax.inject.Singleton
 
 private const val DEFAULT_MAX_IMAGE_CACHE_SIZE_MB = 512
 private const val BYTES_PER_MEGABYTE = 1024L * 1024L
+
+@Singleton
+class ImageCacheInvalidationSignal
+    @Inject
+    constructor() {
+        private val _invalidations =
+            MutableSharedFlow<Unit>(
+                extraBufferCapacity = 1,
+                onBufferOverflow = BufferOverflow.DROP_OLDEST,
+            )
+        val invalidations: SharedFlow<Unit> = _invalidations.asSharedFlow()
+
+        fun notifyChanged() {
+            _invalidations.tryEmit(Unit)
+        }
+    }
 
 internal data class ImageDiskCacheConfig(
     val policy: CachePolicy,
@@ -35,6 +57,7 @@ internal class LazyToggleableImageDiskCache(
     private val trimOnFirstInit: Boolean,
     private val createDelegate: (Long) -> DiskCache,
     private val clearUnopenedDirectory: () -> Unit = {},
+    private val onCacheChanged: () -> Unit = {},
 ) : DiskCache {
     private val lock = Any()
 
@@ -62,23 +85,30 @@ internal class LazyToggleableImageDiskCache(
     private fun ensureDelegate(): DiskCache? {
         if (!enabled || isShutDown) return null
         delegate?.let { return it }
-        synchronized(lock) {
-            if (!enabled || isShutDown) return null
-            delegate?.let { return it }
-            val limitBytes = pendingMaxSizeBytes
-            if (limitBytes <= 0L) return null
-            var created = createDelegate(limitBytes)
-            if (trimOnFirstInit && !didStartupTrim && limitBytes < Long.MAX_VALUE) {
-                didStartupTrim = true
-                val initialSize = runCatching { created.size }.getOrDefault(0L)
-                if (initialSize > limitBytes) {
-                    runCatching { created.shutdown() }
-                    created = createDelegate(limitBytes)
+        var didTrim = false
+        val createdDelegate =
+            synchronized(lock) {
+                if (!enabled || isShutDown) return null
+                delegate?.let { return it }
+                val limitBytes = pendingMaxSizeBytes
+                if (limitBytes <= 0L) return null
+                var created = createDelegate(limitBytes)
+                if (trimOnFirstInit && !didStartupTrim && limitBytes < Long.MAX_VALUE) {
+                    didStartupTrim = true
+                    val initialSize = runCatching { created.size }.getOrDefault(0L)
+                    if (initialSize > limitBytes) {
+                        runCatching { created.shutdown() }
+                        created = createDelegate(limitBytes)
+                        didTrim = true
+                    }
                 }
+                delegate = created
+                created
             }
-            delegate = created
-            return created
+        if (didTrim) {
+            onCacheChanged()
         }
+        return createdDelegate
     }
 
     override val size: Long
@@ -88,13 +118,23 @@ internal class LazyToggleableImageDiskCache(
         get() = if (!enabled) 0L else (delegate?.maxSize ?: pendingMaxSizeBytes)
 
     override fun openSnapshot(key: String): DiskCache.Snapshot? =
-        if (!enabled) null else ensureDelegate()?.openSnapshot(key)
+        if (!enabled) null else ensureDelegate()?.openSnapshot(key)?.let(::NotifyingSnapshot)
 
     override fun openEditor(key: String): DiskCache.Editor? =
-        if (!enabled) null else ensureDelegate()?.openEditor(key)
+        if (!enabled) null else ensureDelegate()?.openEditor(key)?.let(::NotifyingEditor)
 
-    override fun remove(key: String): Boolean =
-        if (!enabled) delegate?.remove(key) ?: false else ensureDelegate()?.remove(key) ?: false
+    override fun remove(key: String): Boolean {
+        val removed =
+            if (!enabled) {
+                delegate?.remove(key) ?: false
+            } else {
+                ensureDelegate()?.remove(key) ?: false
+            }
+        if (removed) {
+            onCacheChanged()
+        }
+        return removed
+    }
 
     override fun clear() {
         val existing = synchronized(lock) { delegate }
@@ -103,6 +143,7 @@ internal class LazyToggleableImageDiskCache(
         } else {
             clearUnopenedDirectory()
         }
+        onCacheChanged()
     }
 
     override fun shutdown() {
@@ -112,5 +153,47 @@ internal class LazyToggleableImageDiskCache(
                 delegate.also { delegate = null }
             }
         existing?.shutdown()
+    }
+
+    private inner class NotifyingEditor(
+        private val delegate: DiskCache.Editor,
+    ) : DiskCache.Editor {
+        override val metadata: Path
+            get() = delegate.metadata
+
+        override val data: Path
+            get() = delegate.data
+
+        override fun commit() {
+            delegate.commit()
+            onCacheChanged()
+        }
+
+        override fun commitAndOpenSnapshot(): DiskCache.Snapshot? {
+            val snapshot = delegate.commitAndOpenSnapshot()
+            onCacheChanged()
+            return snapshot?.let(::NotifyingSnapshot)
+        }
+
+        override fun abort() {
+            delegate.abort()
+        }
+    }
+
+    private inner class NotifyingSnapshot(
+        private val delegate: DiskCache.Snapshot,
+    ) : DiskCache.Snapshot {
+        override val metadata: Path
+            get() = delegate.metadata
+
+        override val data: Path
+            get() = delegate.data
+
+        override fun close() {
+            delegate.close()
+        }
+
+        override fun closeAndOpenEditor(): DiskCache.Editor? =
+            delegate.closeAndOpenEditor()?.let(::NotifyingEditor)
     }
 }

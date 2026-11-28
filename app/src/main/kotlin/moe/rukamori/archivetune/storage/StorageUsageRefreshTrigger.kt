@@ -19,6 +19,7 @@ internal const val STORAGE_USAGE_REFRESH_DEBOUNCE_MILLIS = 250L
 internal fun observeStorageUsageRefreshTriggers(
     mediaCacheInvalidations: Flow<Unit>,
     canvasCacheInvalidations: Flow<Unit>,
+    imageCacheInvalidations: Flow<Unit>,
     manualRefreshes: Flow<Unit>,
     debounceMillis: Long = STORAGE_USAGE_REFRESH_DEBOUNCE_MILLIS,
 ): Flow<Unit> =
@@ -28,5 +29,6 @@ internal fun observeStorageUsageRefreshTriggers(
         merge(
             mediaCacheInvalidations,
             canvasCacheInvalidations,
+            imageCacheInvalidations,
         ).debounce(debounceMillis),
     )

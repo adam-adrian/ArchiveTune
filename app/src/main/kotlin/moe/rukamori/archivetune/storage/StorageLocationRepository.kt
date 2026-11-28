@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import moe.rukamori.archivetune.ImageCacheInvalidationSignal
 import moe.rukamori.archivetune.constants.GitHubContributorsEtagKey
 import moe.rukamori.archivetune.constants.GitHubContributorsJsonKey
 import moe.rukamori.archivetune.constants.GitHubContributorsLastCheckedAtKey
@@ -55,6 +56,7 @@ import moe.rukamori.archivetune.utils.PreferenceStore
 import moe.rukamori.archivetune.utils.dataStore
 import java.io.File
 import javax.inject.Inject
+import javax.inject.Singleton
 
 enum class StorageFolderKind(
     val defaultDirectoryName: String,
@@ -204,6 +206,7 @@ class ClearStorageCacheUseCase
         ): StorageCacheClearResult = repository.clearCache(kind, onProgress)
     }
 
+@Singleton
 class StorageLocationRepository
     @Inject
     constructor(
@@ -213,6 +216,7 @@ class StorageLocationRepository
         private val downloadUtil: DownloadUtil,
         private val downloadedArtworkRepository: DownloadedArtworkRepository,
         private val cacheInvalidationSignal: CacheInvalidationSignal,
+        private val imageCacheInvalidationSignal: ImageCacheInvalidationSignal,
     ) {
         private val manualRefreshSignal =
             MutableSharedFlow<Unit>(
@@ -229,6 +233,7 @@ class StorageLocationRepository
             observeStorageUsageRefreshTriggers(
                 mediaCacheInvalidations = cacheInvalidationSignal.invalidations,
                 canvasCacheInvalidations = CanvasArtworkPlaybackCache.invalidations,
+                imageCacheInvalidations = imageCacheInvalidationSignal.invalidations,
                 manualRefreshes = manualRefreshSignal,
             ).conflate()
                 .map { measureUsage() }

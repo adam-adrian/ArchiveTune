@@ -16,6 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ImageDiskCacheTest {
@@ -240,6 +241,148 @@ class ImageDiskCacheTest {
         assertEquals(0L, cache.size)
         assertFalse(cache.remove("cover-1"))
         assertEquals(1, delegates.size)
+    }
+
+    @Test
+    fun notifiesOnWritesRemovalsClearsAndStartupTrimOnly() {
+        val cacheDir = "/virtual/coil".toPath()
+        var notifications = 0
+        var unopenedClears = 0
+
+        val disabledCache =
+            LazyToggleableImageDiskCache(
+                directory = cacheDir,
+                initialConfig = resolveImageDiskCacheConfig(0),
+                trimOnFirstInit = false,
+                createDelegate = { limit -> FakeDiskCache(directory = cacheDir, maxSize = limit) },
+                clearUnopenedDirectory = { unopenedClears++ },
+                onCacheChanged = { notifications++ },
+            )
+        disabledCache.clear()
+        assertEquals(1, unopenedClears)
+        assertEquals(1, notifications)
+
+        notifications = 0
+        val cache =
+            LazyToggleableImageDiskCache(
+                directory = cacheDir,
+                initialConfig = resolveImageDiskCacheConfig(512),
+                trimOnFirstInit = false,
+                createDelegate = { limit -> FakeDiskCache(directory = cacheDir, maxSize = limit) },
+                onCacheChanged = { notifications++ },
+            )
+
+        // Editor commit notifies; abort does not
+        val editor1 = cache.openEditor("cover-1")
+        assertNotNull(editor1)
+        editor1?.commit()
+        assertEquals(1, notifications)
+
+        val abortedEditor = cache.openEditor("cover-aborted")
+        assertNotNull(abortedEditor)
+        abortedEditor?.abort()
+        assertEquals(1, notifications)
+
+        // Read-only openSnapshot/close does not notify
+        val readSnapshot = cache.openSnapshot("cover-1")
+        assertNotNull(readSnapshot)
+        readSnapshot?.close()
+        assertEquals(1, notifications)
+
+        // commitAndOpenSnapshot notifies; closing returned snapshot does not; closeAndOpenEditor -> commit notifies
+        val editor2 = cache.openEditor("cover-2")
+        assertNotNull(editor2)
+        val committedSnapshot = editor2?.commitAndOpenSnapshot()
+        assertNotNull(committedSnapshot)
+        assertEquals(2, notifications)
+        committedSnapshot?.close()
+        assertEquals(2, notifications)
+
+        val snapshotForEdit = cache.openSnapshot("cover-2")
+        assertNotNull(snapshotForEdit)
+        val reEditor = snapshotForEdit?.closeAndOpenEditor()
+        assertNotNull(reEditor)
+        assertEquals(2, notifications)
+        reEditor?.commit()
+        assertEquals(3, notifications)
+
+        // remove notifies only when key existed
+        assertFalse(cache.remove("missing-key"))
+        assertEquals(3, notifications)
+        assertTrue(cache.remove("cover-1"))
+        assertEquals(4, notifications)
+
+        // clear notifies when delegate is active
+        cache.clear()
+        assertEquals(5, notifications)
+    }
+
+    @Test
+    fun startupTrimNotifiesOnlyWhenTrimActuallyRuns() {
+        val cacheDir = "/virtual/coil".toPath()
+        val limitBytes = 10L * 1024L * 1024L
+
+        // initialSize > limitBytes -> notifies once for startup trim
+        var overLimitNotifications = 0
+        val overLimitDelegates = mutableListOf<FakeDiskCache>()
+        val trimmedCache =
+            LazyToggleableImageDiskCache(
+                directory = cacheDir,
+                initialConfig = resolveImageDiskCacheConfig(10),
+                trimOnFirstInit = true,
+                createDelegate = { limit ->
+                    val size = if (overLimitDelegates.isEmpty()) limitBytes + 1_024L else limitBytes - 512L
+                    FakeDiskCache(directory = cacheDir, maxSize = limit, initialSize = size).also(overLimitDelegates::add)
+                },
+                onCacheChanged = { overLimitNotifications++ },
+            )
+        trimmedCache.openSnapshot("probe")
+        assertEquals(1, overLimitNotifications)
+
+        // initialSize <= limitBytes -> does not notify
+        var underLimitNotifications = 0
+        val underLimitCache =
+            LazyToggleableImageDiskCache(
+                directory = cacheDir,
+                initialConfig = resolveImageDiskCacheConfig(10),
+                trimOnFirstInit = true,
+                createDelegate = { limit ->
+                    FakeDiskCache(directory = cacheDir, maxSize = limit, initialSize = limitBytes)
+                },
+                onCacheChanged = { underLimitNotifications++ },
+            )
+        underLimitCache.openSnapshot("probe")
+        assertEquals(0, underLimitNotifications)
+
+        // Unlimited (-1) -> does not notify
+        var unlimitedNotifications = 0
+        val unlimitedCache =
+            LazyToggleableImageDiskCache(
+                directory = cacheDir,
+                initialConfig = resolveImageDiskCacheConfig(-1),
+                trimOnFirstInit = true,
+                createDelegate = { limit ->
+                    FakeDiskCache(directory = cacheDir, maxSize = limit, initialSize = limitBytes * 4L)
+                },
+                onCacheChanged = { unlimitedNotifications++ },
+            )
+        unlimitedCache.openSnapshot("probe")
+        assertEquals(0, unlimitedNotifications)
+
+        // trimOnFirstInit = false -> does not notify
+        var noTrimNotifications = 0
+        val noTrimCache =
+            LazyToggleableImageDiskCache(
+                directory = cacheDir,
+                initialConfig = resolveImageDiskCacheConfig(10),
+                trimOnFirstInit = false,
+                createDelegate = { limit ->
+                    FakeDiskCache(directory = cacheDir, maxSize = limit, initialSize = limitBytes + 1_024L)
+                },
+                onCacheChanged = { noTrimNotifications++ },
+            )
+        noTrimCache.openSnapshot("probe")
+        assertEquals(0, noTrimNotifications)
     }
 
     private class FakeDiskCache(

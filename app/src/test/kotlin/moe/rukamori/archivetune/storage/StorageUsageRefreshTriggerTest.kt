@@ -20,11 +20,13 @@ class StorageUsageRefreshTriggerTest {
         runBlocking {
             val mediaInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
             val canvasInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+            val imageInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
             val manualRefreshes = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
 
             observeStorageUsageRefreshTriggers(
                 mediaCacheInvalidations = mediaInvalidations,
                 canvasCacheInvalidations = canvasInvalidations,
+                imageCacheInvalidations = imageInvalidations,
                 manualRefreshes = manualRefreshes,
                 debounceMillis = 1_000L,
             ).test {
@@ -39,11 +41,13 @@ class StorageUsageRefreshTriggerTest {
         runBlocking {
             val mediaInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
             val canvasInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+            val imageInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
             val manualRefreshes = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
 
             observeStorageUsageRefreshTriggers(
                 mediaCacheInvalidations = mediaInvalidations,
                 canvasCacheInvalidations = canvasInvalidations,
+                imageCacheInvalidations = imageInvalidations,
                 manualRefreshes = manualRefreshes,
                 debounceMillis = 1_000L,
             ).test {
@@ -57,15 +61,17 @@ class StorageUsageRefreshTriggerTest {
         }
 
     @Test
-    fun coalescesRapidBurstOfMediaAndCanvasInvalidationsIntoSingleTrigger() =
+    fun coalescesRapidBurstOfMediaCanvasAndImageInvalidationsIntoSingleTrigger() =
         runBlocking {
             val mediaInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
             val canvasInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
+            val imageInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
             val manualRefreshes = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
 
             observeStorageUsageRefreshTriggers(
                 mediaCacheInvalidations = mediaInvalidations,
                 canvasCacheInvalidations = canvasInvalidations,
+                imageCacheInvalidations = imageInvalidations,
                 manualRefreshes = manualRefreshes,
                 debounceMillis = 60L,
             ).test {
@@ -74,6 +80,7 @@ class StorageUsageRefreshTriggerTest {
                 repeat(4) {
                     mediaInvalidations.tryEmit(Unit)
                     canvasInvalidations.tryEmit(Unit)
+                    imageInvalidations.tryEmit(Unit)
                 }
 
                 assertEquals(Unit, awaitItem())
@@ -88,11 +95,13 @@ class StorageUsageRefreshTriggerTest {
         runBlocking {
             val mediaInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
             val canvasInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+            val imageInvalidations = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
             val manualRefreshes = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
 
             observeStorageUsageRefreshTriggers(
                 mediaCacheInvalidations = mediaInvalidations,
                 canvasCacheInvalidations = canvasInvalidations,
+                imageCacheInvalidations = imageInvalidations,
                 manualRefreshes = manualRefreshes,
                 debounceMillis = 40L,
             ).test {
